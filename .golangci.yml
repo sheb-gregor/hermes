@@ -1,0 +1,57 @@
+linters-settings:
+  govet:
+    check-shadowing: true
+  golint:
+    min-confidence: 0
+  gocyclo:
+    min-complexity: 25
+  dupl:
+    threshold: 200
+  goconst:
+    min-len: 2
+    min-occurrences: 2
+
+linters:
+  enable:
+    - dupl
+    - funlen
+    - goimports
+    - goconst
+    - gocritic
+    - gochecknoinits
+    - gochecknoglobals
+    - gofmt
+    - gosec
+    - lll
+    - misspell
+    - nakedret
+    - prealloc
+    - interfacer
+    - scopelint
+    - stylecheck
+    - unconvert
+
+issues:
+  exclude-rules:
+    # Exclude some linters from running on tests files.
+    - path: _test\.go
+      linters:
+        - dupl
+        - funlen
+    - path: btc\.go
+      linters:
+        - dupl
+    - path: ltc\.go
+      linters:
+        - dupl
+    - path: scripts/
+      linters:
+        - funlen
+        - ineffassign
+        - gochecknoglobals
+        - staticcheck
+    - path: _params\.go
+      linters:
+        - govet
+        - gochecknoglobals
+        - lll

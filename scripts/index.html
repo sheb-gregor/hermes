@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<meta charset="utf-8"/>
+<title>WebSocket Test</title>
+<script type="text/javascript">
+
+    let wsUri = "ws://localhost:8090/_ws/subscribe";
+    let websocket;
+    let output;
+    let uuidVal;
+
+    function uuidV4() {
+        uuidVal = ([1e7] + -1e3 + -4e3 + -8e3 + -1e11).replace(/[018]/g, c =>
+            (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)
+        );
+        console.log(uuidVal);
+
+        let u = document.getElementById("uuid")
+        u.innerText = uuidVal
+
+    }
+
+
+    function setUUID() {
+        let uuid = document.getElementById("uuid_input")
+        uuidVal = uuid.value
+
+        let uuidV = document.getElementById("uuid")
+        uuidV.innerText = uuidVal
+    }
+
+    function init() {
+        output = document.getElementById("output");
+        uuidV4();
+        testWebSocket();
+    }
+
+    function testWebSocket() {
+        websocket = new WebSocket(wsUri + '?uuid=' + uuidVal);
+        websocket.onopen = function (evt) {
+            onOpen(evt)
+        };
+        websocket.onclose = function (evt) {
+            onClose(evt)
+        };
+        websocket.onmessage = function (evt) {
+            onMessage(evt)
+        };
+        websocket.onerror = function (evt) {
+            onError(evt)
+        };
+    }
+
+    function onOpen(evt) {
+        writeToScreen("CONNECTED");
+        let json = {
+            event: "handshake",
+            isBroadcast: false,
+            data: null
+        };
+        doSend(JSON.stringify(json));
+
+        writeToScreen("CONNECTED");
+
+        let subs = [
+            {channel: "ctp.notifications.prices", event: "ctp.notifications.prices"},
+            {channel: "ctp.notifications.orders", event: "ctp.notifications.orders"},
+            {channel: "ctp.notifications.accounts", event: "ctp.notifications.accounts"},
+            {channel: "ctp.notifications.deposits", event: "ctp.notifications.deposits"},
+        ];
+
+
+        for (let i in subs) {
+            doSend(JSON.stringify({
+                event: "subscribe",
+                command: {channel: subs[i].channel, event: subs[i].event},
+            }));
+        }
+    }
+
+    function onClose(evt) {
+        writeToScreen("DISCONNECTED");
+    }
+
+    function onMessage(evt) {
+        let response = JSON.parse(evt.data)
+
+        if (response.event === "ping") {
+            let json = {
+                event: "pong",
+                channel: "ws_status"
+            };
+            doSend(JSON.stringify(json));
+        }
+        writeToScreen('<span style="color: blue;">RESPONSE: ' + evt.data + '</span>');
+    }
+
+    function onError(evt) {
+        writeToScreen('<span style="color: red;">ERROR:</span> ' + evt.data);
+    }
+
+    function doSend(message) {
+        writeToScreen("SENT: " + message);
+        websocket.send(message);
+    }
+
+    function writeToScreen(message) {
+        let pre = document.createElement("p");
+        pre.style.wordWrap = "break-word";
+        pre.innerHTML = message;
+        output.appendChild(pre);
+    }
+
+    window.addEventListener("load", init, false);
+
+</script>
+
+<h2>WebSocket Test</h2>
+
+<div>
+  <label id="uuid"> t </label>
+  <br/>
+  <input id="uuid_input">
+  <br>
+
+  <br>
+  <button onclick="setUUID()"> Set Custom</button>
+  <button onclick="uuidV4()"> GEN UUID</button>
+</div>
+<br>
+<div id="output"></div>
