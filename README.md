@@ -1,3 +1,0 @@
-# Hermes 
-
-Event Delivery Unit

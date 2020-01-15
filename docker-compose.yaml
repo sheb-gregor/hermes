@@ -1,0 +1,34 @@
+version: '3'
+
+services:
+  hermes:
+    build:
+      dockerfile: Dockerfile
+      context: .
+    env_file:
+      - ./env/local.env
+    volumes:
+      - './env/local.config.yaml:/config.yaml'
+    ports:
+    - '8090:8090'
+    depends_on:
+      - rabbitmq
+    networks:
+      luxtrade:
+
+  rabbitmq:
+    image: 'bitnami/rabbitmq:3.8'
+    env_file:
+      - ./env/local.env
+    ports:
+      - '4379:4369'
+      - '5672:5672'
+      - '25672:25672'
+      - '15672:15672'
+    volumes:
+      - ./env/data/rabbitmq_data:/bitnami
+    networks:
+      luxtrade:
+
+networks:
+  luxtrade: {}

@@ -1,0 +1,29 @@
+api:
+  host: 0.0.0.0
+  port: 8090
+
+log:
+  app_name: hermes
+  level: env:HERMES_LOG_LEVEL
+  add_trace: true
+  sentry: ""
+  json: false
+
+rabbit_mq:
+  host: 127.0.0.1:5672
+  user: "env:RABBITMQ_USERNAME"
+  password: "env:RABBITMQ_PASSWORD"
+  consumer_tag: hermes
+  subs:
+    - exchange: ctp.notifications.prices
+      exchange_type: fanout
+      queue: ctp.hermes.prices
+    - exchange: ctp.notifications.orders
+      exchange_type: fanout
+      queue: ctp.hermes.orders
+    - exchange: ctp.notifications.accounts
+      exchange_type: fanout
+      queue: ctp.hermes.accounts
+    - exchange: ctp.notifications.deposits
+      exchange_type: fanout
+      queue: ctp.hermes.deposits
