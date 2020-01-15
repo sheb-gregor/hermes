@@ -1,13 +1,13 @@
-ws_api:
+api:
   host: 0.0.0.0
   port: 8090
 
 log:
   app_name: hermes
-  level: env:HERMES_LOG_LEVEL
+  level: "env:HERMES_LOG_LEVEL"
   add_trace: true
   sentry: ""
-  json: false
+  json: true
 
 rabbit_mq:
   host: rabbitmq:5672
