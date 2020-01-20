@@ -26,4 +26,4 @@ rabbit_mq:
       queue: ctp.hermes.accounts
     - exchange: ctp.notifications.deposits
       exchange_type: fanout
-      queue: ctp.hermes.prices
+      queue: ctp.hermes.deposits

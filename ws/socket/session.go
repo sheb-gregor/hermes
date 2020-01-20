@@ -79,9 +79,12 @@ func NewSession(ctx context.Context, log *logrus.Entry, bus EventStream,
 }
 
 func (c *Session) isSubscribed(channel, event string) bool {
-	chanSub := c.subscriptionsChannel.getChannel(channel) || c.subscriptionsChannel.getChannel(WildcardSubscription)
+	if channel == EvStatusChannel || c.subscriptionsChannel.getChannel(WildcardSubscription) {
+		return true
+	}
 
-	eventSubs := c.subscriptionsEvent.getSubscribeMap(channel)
+	chanSub := c.subscriptionsChannel.getChannel(channel)
+	eventSubs := c.subscriptionsEvent.getSubscribeMap(event)
 	if eventSubs == nil {
 		return false
 	}
@@ -240,13 +243,16 @@ func (c *Session) pingWs() error {
 
 func (c *Session) processIncomingMessage(raw []byte) error {
 	userMsg := new(models.Message)
-
 	err := json.Unmarshal(raw, userMsg)
 	if err != nil {
 		c.log.WithError(err).
 			WithField("handler", "processIncomingMessage").
 			Error(unableToUnmarshal, string(raw))
 		return err
+	}
+
+	if userMsg.Channel != EvStatusChannel {
+		return errors.New("invalid channel")
 	}
 
 	switch userMsg.Event {
@@ -267,10 +273,6 @@ func (c *Session) processIncomingMessage(raw []byte) error {
 		channel := userMsg.Command["channel"]
 		c.rmSubscription(channel)
 	case EvPong:
-		if userMsg.Channel != EvStatusChannel {
-			return errors.New("invalid ping status channel")
-		}
-
 		c.log.Debug("client synchronization - pong received")
 	}
 

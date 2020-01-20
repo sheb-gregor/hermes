@@ -120,7 +120,7 @@ func (worker *RabbitConsumer) Run(wCtx uwe.Context) error {
 					"uuid":         message.Headers["uuid"],
 					"body":         string(message.Body),
 				}).
-				Trace("received a new message from queue")
+				Trace("received a deliveries from consumer")
 
 			visibility, ok := message.Headers[RHeaderVisibility].(string)
 			if !ok {
@@ -143,7 +143,7 @@ func (worker *RabbitConsumer) Run(wCtx uwe.Context) error {
 			worker.outBus <- &socket.Event{
 				Kind: socket.EKMessage,
 				Message: &models.Message{
-					Broadcast: uuid != "",
+					Broadcast: visibility == VisibilityBroadcast,
 					Channel:   message.Exchange,
 					Event:     event,
 					UserUID:   uuid,

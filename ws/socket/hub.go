@@ -121,7 +121,7 @@ func (h *Hub) Run(wCtx uwe.Context) error {
 					continue
 				}
 
-				client.send <- &models.Message{Event: "ok"}
+				client.send <- &models.Message{Event: EvHandshake, Channel: EvStatusChannel}
 				h.log.Debug("Response sent to ", client.connUID)
 
 			case EKMessage:
