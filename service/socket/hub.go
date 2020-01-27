@@ -19,6 +19,8 @@ type Hub struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
+	subscriptionsAdder chan<- models.ManageQueue
+
 	eventStream     EventStream
 	sessionStorage  wsSessionStorage
 	usersSessions   wsUsersSessions
@@ -48,8 +50,17 @@ func (h *Hub) Context() context.Context {
 	return h.ctx
 }
 
+func (h *Hub) SetSubscriptionsAdder(subscriptionsAdder chan<- models.ManageQueue) {
+	h.subscriptionsAdder = subscriptionsAdder
+}
+
 func (h *Hub) addSession(client *Session) {
 	// MetricsCollector.Add("hub.add_client")
+
+	h.subscriptionsAdder <- models.ManageQueue{
+		Queue:  client.userUUID,
+		Action: models.ActionAddQueue,
+	}
 
 	h.sessionStorage.Store(client.connUID, client)
 	h.usersSessions.addSessionID(client.userUUID, client.connUID)
@@ -68,6 +79,11 @@ func (h *Hub) rmSession(sessionID int64) {
 			WithField("connUID", sessionID).
 			Warn("unable to get client by connUID")
 		return
+	}
+
+	h.subscriptionsAdder <- models.ManageQueue{
+		Queue:  client.userUUID,
+		Action: models.ActionAddQueue,
 	}
 
 	h.sessionStorage.Delete(sessionID)

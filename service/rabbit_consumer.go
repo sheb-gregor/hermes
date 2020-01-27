@@ -1,4 +1,4 @@
-package ws
+package service
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 	"github.com/streadway/amqp"
 	"gitlab.inn4science.com/ctp/hermes/config"
 	"gitlab.inn4science.com/ctp/hermes/models"
-	"gitlab.inn4science.com/ctp/hermes/ws/socket"
+	"gitlab.inn4science.com/ctp/hermes/service/socket"
 )
 
 const (
@@ -26,19 +26,26 @@ const (
 type RabbitConsumer struct {
 	config config.RabbitMQ
 	logger *logrus.Entry
+	wg     *sync.WaitGroup
 
 	conn    *amqp.Connection
 	channel *amqp.Channel
 
-	outBus chan<- *socket.Event
+	queueCancelers  map[string]context.CancelFunc
+	queueManagement chan models.ManageQueue
+	outBus          chan<- *socket.Event
 }
 
-func NewRabbitConsumer(logger *logrus.Entry, configuration config.RabbitMQ, outBus chan<- *socket.Event) uwe.Worker {
+func NewRabbitConsumer(logger *logrus.Entry, configuration config.RabbitMQ, outBus chan<- *socket.Event) (uwe.Worker, chan<- models.ManageQueue) {
+	qm := make(chan models.ManageQueue)
 	return &RabbitConsumer{
-		logger: logger,
-		config: configuration,
-		outBus: outBus,
-	}
+		logger:          logger,
+		config:          configuration,
+		outBus:          outBus,
+		queueManagement: qm,
+		queueCancelers:  map[string]context.CancelFunc{},
+		wg:              &sync.WaitGroup{},
+	}, qm
 }
 
 func (worker *RabbitConsumer) Init() error {
@@ -55,88 +62,122 @@ func (worker *RabbitConsumer) Init() error {
 	}
 
 	for _, mqSub := range rabbitCfg.Subs {
-		err = worker.channel.ExchangeDeclare(
-			mqSub.Exchange, mqSub.ExchangeType,
-			true, false, false, false, nil,
-		)
+		err = worker.ensureExchange(mqSub)
 		if err != nil {
-			return errors.Wrap(err, "failed to declare exchange - "+mqSub.Exchange)
+			return err
 		}
+	}
 
-		_, err = worker.channel.QueueDeclare(
-			mqSub.Queue, false, false, false, false, nil)
-		if err != nil {
-			return errors.Wrap(err, "failed to declare a queue")
-		}
+	return worker.ensureExchange(rabbitCfg.Common)
+}
 
-		err = worker.channel.QueueBind(
-			mqSub.Queue, mqSub.RoutingKey, mqSub.Exchange, false, nil)
-		if err != nil {
-			return errors.Wrap(err, "failed to bind queue: %s")
-		}
+func (worker *RabbitConsumer) ensureExchange(mqSub config.MqSubscription) error {
+	err := worker.channel.ExchangeDeclare(
+		mqSub.Exchange, mqSub.ExchangeType,
+		true, false, false, false, nil,
+	)
+	if err != nil {
+		return errors.Wrap(err, "failed to declare exchange - "+mqSub.Exchange)
+	}
+	return nil
+}
+
+func (worker *RabbitConsumer) ensureQueue(mqSub config.MqSubscription) error {
+	_, err := worker.channel.QueueDeclare(
+		mqSub.Queue, false, false, false, false, nil)
+	if err != nil {
+		return errors.Wrap(err, "failed to declare a queue")
+	}
+
+	err = worker.channel.QueueBind(
+		mqSub.Queue, mqSub.RoutingKey, mqSub.Exchange, false, nil)
+	if err != nil {
+		return errors.Wrap(err, "failed to bind queue: %s")
 	}
 
 	return nil
 }
 
+func (worker *RabbitConsumer) runQueueSub(ctx context.Context, sub config.MqSubscription, out chan amqp.Delivery) {
+	if _, ok := worker.queueCancelers[sub.Queue]; ok {
+		return
+	}
+
+	subCtx, cancel := context.WithCancel(ctx)
+	worker.queueCancelers[sub.Queue] = cancel
+
+	worker.wg.Add(1)
+	logger := worker.logger.
+		WithField("queue", sub.Queue).
+		WithField("exchange", sub.Exchange)
+
+	go func(subscription config.MqSubscription) {
+		defer worker.wg.Done()
+
+		if err := worker.startConsumingRoutine(subCtx, subscription, out); err != nil {
+			logger.WithError(err).Error("failed to subscribe")
+			return
+		}
+	}(sub)
+
+}
+
 // nolint:funlen
 func (worker *RabbitConsumer) Run(wCtx uwe.Context) error {
-	wg := sync.WaitGroup{}
 	ctx, cancel := context.WithCancel(wCtx)
 	deliveries := make(chan amqp.Delivery, len(worker.config.Subs))
 
 	for _, sub := range worker.config.Subs {
-		wg.Add(1)
-		logger := worker.logger.
-			WithField("queue", sub.Queue).
-			WithField("exchange", sub.Exchange)
-
-		go func(subscription config.MqSubscription) {
-			defer wg.Done()
-
-			if err := worker.runSub(ctx, subscription, deliveries); err != nil {
-				logger.WithError(err).Error("failed to subscribe")
-				return
-			}
-		}(sub)
+		worker.runQueueSub(ctx, sub, deliveries)
 	}
 
 	for {
 		select {
+		case qm := <-worker.queueManagement:
+			switch qm.Action {
+			case models.ActionAddQueue:
+				worker.runQueueSub(ctx, worker.config.GetCommonSub(qm.Queue), deliveries)
+			case models.ActionRmQueue:
+				if qCancel, ok := worker.queueCancelers[qm.Queue]; ok {
+					qCancel()
+				}
+			}
+
 		case message := <-deliveries:
 			if message.Body == nil {
 				continue
 			}
+			logger := worker.logger.WithFields(logrus.Fields{
+				"routing_key":  message.RoutingKey,
+				"consumer_tag": message.ConsumerTag,
+				"exchange":     message.Exchange})
 
-			worker.logger.
+			logger.
 				WithFields(logrus.Fields{
 					"delivery_tag": message.DeliveryTag,
-					"exchange":     message.Exchange,
-					"routing_key":  message.RoutingKey,
-					"consumer_tag": message.ConsumerTag,
 					"message_id":   message.MessageId,
 					"content_type": message.ContentType,
-					"visibility":   message.Headers["visibility"],
-					"uuid":         message.Headers["uuid"],
+					"visibility":   message.Headers[RHeaderVisibility],
+					"uuid":         message.Headers[RHeaderUUID],
 					"body":         string(message.Body),
 				}).
 				Trace("received a deliveries from consumer")
 
 			visibility, ok := message.Headers[RHeaderVisibility].(string)
 			if !ok {
-				// log.Warn
+				logger.Warn("message don't have RHeaderVisibility")
 				continue
 			}
 
 			uuid, ok := message.Headers[RHeaderUUID].(string)
 			if !ok && visibility == VisibilityDirect {
-				// log.Warn
+				logger.Warn("message don't have RHeaderUUID")
 				continue
 			}
 
 			event, ok := message.Headers[RHeaderEvent].(string)
 			if !ok {
-				// log.Warn
+				logger.Warn("message don't have RHeaderEvent")
 				continue
 			}
 
@@ -152,27 +193,25 @@ func (worker *RabbitConsumer) Run(wCtx uwe.Context) error {
 			}
 		case <-wCtx.Done():
 			cancel()
-			wg.Wait()
+			worker.wg.Wait()
 			worker.logger.Info("Receive exit code, stop all consumers")
 			return nil
 		}
 	}
 }
 
-func (worker *RabbitConsumer) runSub(ctx context.Context, sub config.MqSubscription, out chan amqp.Delivery) error {
+func (worker *RabbitConsumer) startConsumingRoutine(ctx context.Context, sub config.MqSubscription, out chan amqp.Delivery) error {
 	logger := worker.logger.
 		WithField("queue", sub.Queue).
 		WithField("exchange", sub.Exchange)
 
-	q, err := worker.channel.QueueDeclare(
-		sub.Queue, false, false, false, false, nil)
-	if err != nil {
-		logger.WithError(err).Error("failed to declare a queue")
-		return errors.Wrap(err, "failed to declare a queue")
+	if err := worker.ensureQueue(sub); err != nil {
+		logger.WithError(err).Error("failed to ensure queue")
+		return errors.Wrap(err, "failed to ensure queue")
 	}
 
 	consume, err := worker.channel.Consume(
-		q.Name, worker.config.GetConsumerTag(q.Name), true, false, false, false, nil)
+		sub.Queue, worker.config.GetConsumerTag(sub.Queue), true, false, false, false, nil)
 	if err != nil {
 		logger.WithError(err).Error("failed to register a consumer")
 		return errors.Wrap(err, "failed to register a consumer")

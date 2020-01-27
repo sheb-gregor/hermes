@@ -1,10 +1,10 @@
-package ws
+package service
 
 import (
 	"github.com/lancer-kit/uwe/v2"
 	"github.com/sirupsen/logrus"
 	"gitlab.inn4science.com/ctp/hermes/config"
-	"gitlab.inn4science.com/ctp/hermes/ws/socket"
+	"gitlab.inn4science.com/ctp/hermes/service/socket"
 )
 
 const (
@@ -44,9 +44,12 @@ func InitChief(logger *logrus.Entry, cfg config.Cfg) uwe.Chief {
 	logger = logger.WithField("app_layer", "workers")
 
 	hub := socket.NewHub(logger.WithField("worker", WorkerHub))
-	webServer := GetServer(logger.WithField("worker", WorkerWsAPI), cfg.API, hub.Context(), hub.EventBus())
-	rabbitConsumer := NewRabbitConsumer(
+
+	rabbitConsumer, qManager := NewRabbitConsumer(
 		logger.WithField("worker", WorkerRabbitConsumer), cfg.RabbitMQ, hub.EventBus())
+	hub.SetSubscriptionsAdder(qManager)
+
+	webServer := GetServer(logger.WithField("worker", WorkerWsAPI), cfg, hub.Context(), hub.EventBus())
 
 	chief.AddWorker(WorkerHub, hub)
 	chief.AddWorker(WorkerWsAPI, webServer)

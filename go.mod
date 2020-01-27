@@ -5,6 +5,8 @@ go 1.13
 require (
 	github.com/go-chi/chi v4.0.2+incompatible
 	github.com/go-ozzo/ozzo-validation v3.6.0+incompatible
+	github.com/gomodule/redigo v2.0.0+incompatible
+	github.com/google/uuid v1.1.1
 	github.com/gorilla/websocket v1.4.1
 	github.com/lancer-kit/armory v1.7.1
 	github.com/lancer-kit/noble v1.0.8

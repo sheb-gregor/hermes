@@ -13,6 +13,7 @@ type RabbitMQ struct {
 	User        noble.Secret     `json:"user" yaml:"user"`
 	Password    noble.Secret     `json:"password" yaml:"password"`
 	ConsumerTag string           `json:"consumer_tag" yaml:"consumer_tag"`
+	Common      MqSubscription   `json:"common" yaml:"common"`
 	Subs        []MqSubscription `json:"subs" yaml:"subs"`
 }
 
@@ -33,11 +34,28 @@ func (cfg RabbitMQ) GetConsumerTag(queue string) string {
 	return fmt.Sprintf("%s:%s_%s", hostname, queue, cfg.ConsumerTag)
 }
 
+func (cfg RabbitMQ) GetCommonSub(queue string) MqSubscription {
+	return MqSubscription{
+		Queue:        queue,
+		Exchange:     cfg.Common.Exchange,
+		ExchangeType: cfg.Common.ExchangeType,
+		RoutingKey:   cfg.Common.Queue,
+	}
+}
+
 func (cfg RabbitMQ) Validate() error {
 	return validation.ValidateStruct(&cfg,
 		validation.Field(&cfg.Host, validation.Required),
 		validation.Field(&cfg.User, noble.RequiredSecret),
 		validation.Field(&cfg.Password, noble.RequiredSecret),
 		validation.Field(&cfg.Subs, validation.Required),
+		validation.Field(&cfg.Common, validation.Required),
+	)
+}
+
+func (cfg MqSubscription) Validate() error {
+	return validation.ValidateStruct(&cfg,
+		validation.Field(&cfg.Exchange, validation.Required),
+		validation.Field(&cfg.ExchangeType, validation.Required),
 	)
 }

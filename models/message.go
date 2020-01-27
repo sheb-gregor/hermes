@@ -9,3 +9,13 @@ type Message struct {
 	Command map[string]string      `json:"command,omitempty"`
 	Data    map[string]interface{} `json:"data,omitempty"`
 }
+
+type ManageQueue struct {
+	Queue  string
+	Action int
+}
+
+const (
+	ActionAddQueue = 1
+	ActionRmQueue  = -1
+)

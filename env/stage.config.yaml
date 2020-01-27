@@ -9,11 +9,23 @@ log:
   sentry: ""
   json: true
 
+redis:
+  dev_mode: false # when true, redis will be not used
+  ping_interval: 60
+  auth: "env:REDIS_PASSWORD"
+  host: "redis:6379"
+  record_ttl: 60
+  max_idle: 5 # Maximum number of idle connections in the pool.
+  max_active: 0 # When zero, there is no limit on the number of connections in the pool.
+
 rabbit_mq:
   host: rabbitmq:5672
   user: "env:RABBITMQ_DEFAULT_USER"
   password: "env:RABBITMQ_DEFAULT_PASS"
   consumer_tag: hermes
+  common:
+    exchange: ctp.notifications.direct
+    exchange_type: direct
   subs:
     - exchange: ctp.notifications.prices
       exchange_type: fanout

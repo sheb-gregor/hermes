@@ -41,6 +41,7 @@ type Cfg struct {
 
 	API      api.Config `json:"api" yaml:"api"`
 	RabbitMQ RabbitMQ   `json:"rabbit_mq" yaml:"rabbit_mq"`
+	Redis    RedisConf  `json:"redis" yaml:"redis"`
 }
 
 func (cfg Cfg) Validate() error {
@@ -48,6 +49,7 @@ func (cfg Cfg) Validate() error {
 		validation.Field(&cfg.API, validation.Required),
 		validation.Field(&cfg.Log, validation.Required),
 		validation.Field(&cfg.RabbitMQ, validation.Required),
+		validation.Field(&cfg.Redis, validation.Required),
 	)
 }
 

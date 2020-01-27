@@ -134,15 +134,19 @@ func (c *Session) readStream() {
 	c.conn.SetPongHandler(func(string) error { return c.conn.SetReadDeadline(time.Now().Add(pongWait)) })
 
 	var needToStop bool
-	incomingMessages := make(chan []byte)
+	type wsMessage struct {
+		data  []byte
+		mType int
+	}
+	incomingMessages := make(chan wsMessage)
 
-	go func(im chan []byte) {
+	go func(im chan wsMessage) {
 		for {
 			if needToStop {
 				close(im)
 				return
 			}
-			_, message, err := c.conn.ReadMessage()
+			msgCode, message, err := c.conn.ReadMessage()
 			if err != nil {
 				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 					c.log.WithError(err).Info("socket closed")
@@ -151,13 +155,14 @@ func (c *Session) readStream() {
 				}
 				return
 			}
+
 			// MetricsCollector.Add(metrics.MKey("sessionStorage." + c.userUUID + ".readMessage"))
 			if message == nil {
 				c.log.Debug("nil message from read channel")
 				continue
 			}
 
-			im <- message
+			im <- wsMessage{data: message, mType: msgCode}
 		}
 	}(incomingMessages)
 
@@ -167,8 +172,15 @@ func (c *Session) readStream() {
 			// all the necessary things will be done on a deferred call
 			needToStop = true
 			return
-		case message := <-incomingMessages:
-			if err := c.processIncomingMessage(message); err != nil {
+		case m := <-incomingMessages:
+			switch m.mType {
+			case websocket.PingMessage, websocket.PongMessage:
+				c.log.Trace("ws proto synchronization")
+			case websocket.CloseMessage:
+				needToStop = true
+				return
+			}
+			if err := c.processIncomingMessage(m.data); err != nil {
 				c.log.WithError(err).Info("failed to check message event")
 				continue
 			}
@@ -227,11 +239,6 @@ func (c *Session) writeToStream() {
 
 func (c *Session) pingWs() error {
 	rawData := []byte(`{"channel":"ws_status","event":"ping"}`)
-	// rawData, err := json.Marshal(models.Message{Channel: EvStatusChannel, Event: "ping"})
-	// if err != nil {
-	// 	return errors.Wrap(err, "unable to marshal ping message")
-	// }
-
 	if err := c.conn.WriteMessage(websocket.TextMessage, rawData); err != nil {
 		c.log.WithError(err).Info("failed to send ping message")
 		return err

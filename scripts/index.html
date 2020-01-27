@@ -4,9 +4,11 @@
 <script type="text/javascript">
 
     let wsUri = "ws://localhost:8090/_ws/subscribe";
+    // let wsUri = "ws://78.47.147.54:8090/_ws/subscribe";
     let websocket;
     let output;
     let uuidVal;
+    let token;
 
     function uuidV4() {
         uuidVal = ([1e7] + -1e3 + -4e3 + -8e3 + -1e11).replace(/[018]/g, c =>
@@ -21,21 +23,23 @@
 
 
     function setUUID() {
-        let uuid = document.getElementById("uuid_input")
-        uuidVal = uuid.value
-
-        let uuidV = document.getElementById("uuid")
-        uuidV.innerText = uuidVal
+        let uuid = document.getElementById("uuid_input");
+        // uuidVal = uuid.value
+        token = uuid.value;
+        let uuidV = document.getElementById("uuid");
+        uuidV.innerText = token;
+        openWebSocket("token", token);
     }
 
     function init() {
         output = document.getElementById("output");
         uuidV4();
-        testWebSocket();
+
+        openWebSocket("uuid", uuidVal);
     }
 
-    function testWebSocket() {
-        websocket = new WebSocket(wsUri + '?uuid=' + uuidVal);
+    function openWebSocket(key, value) {
+        websocket = new WebSocket(wsUri+"?"+key+"="+value);
         websocket.onopen = function (evt) {
             onOpen(evt)
         };
