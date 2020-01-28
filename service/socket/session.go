@@ -289,7 +289,12 @@ func (c *Session) processIncomingMessage(raw []byte) error {
 func (c *Session) writeToClient(message *models.Message) error {
 	// MetricsCollector.Add(metrics.MKey("sessionStorage." + c.userUUID + ".writeToClient"))
 
-	data, err := json.Marshal(message)
+	var msg interface{} = message
+	if message.Channel != EvStatusChannel {
+		msg = message.ToShort()
+	}
+
+	data, err := json.Marshal(msg)
 	if err != nil {
 		c.log.WithError(err).
 			WithField("handler", "writeToClient").
