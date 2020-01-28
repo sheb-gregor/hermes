@@ -36,7 +36,8 @@ type RabbitConsumer struct {
 	outBus          chan<- *socket.Event
 }
 
-func NewRabbitConsumer(logger *logrus.Entry, configuration config.RabbitMQ, outBus chan<- *socket.Event) (uwe.Worker, chan<- models.ManageQueue) {
+func NewRabbitConsumer(logger *logrus.Entry, configuration config.RabbitMQ,
+	outBus chan<- *socket.Event) (uwe.Worker, chan<- models.ManageQueue) {
 	qm := make(chan models.ManageQueue)
 	return &RabbitConsumer{
 		logger:          logger,
@@ -200,7 +201,8 @@ func (worker *RabbitConsumer) Run(wCtx uwe.Context) error {
 	}
 }
 
-func (worker *RabbitConsumer) startConsumingRoutine(ctx context.Context, sub config.MqSubscription, out chan amqp.Delivery) error {
+func (worker *RabbitConsumer) startConsumingRoutine(ctx context.Context,
+	sub config.MqSubscription, out chan amqp.Delivery) error {
 	logger := worker.logger.
 		WithField("queue", sub.Queue).
 		WithField("exchange", sub.Exchange)

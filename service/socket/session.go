@@ -124,6 +124,7 @@ func (c *Session) rmSubscription(channel string) {
 // The application runs readPump in a per-connection goroutine. The application
 // ensures that there is at most one reader on a connection by executing all
 // reads from this goroutine.
+// nolint:funlen
 func (c *Session) readStream() {
 	defer func() {
 		c.log.Info("connection closed for user:", c.connUID)
