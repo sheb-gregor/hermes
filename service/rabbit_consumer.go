@@ -90,8 +90,13 @@ func (worker *RabbitConsumer) ensureQueue(mqSub config.MqSubscription) error {
 		return errors.Wrap(err, "failed to declare a queue")
 	}
 
+	routingKey := mqSub.RoutingKey
+	if routingKey == "" {
+		routingKey = mqSub.Queue
+	}
+
 	err = worker.channel.QueueBind(
-		mqSub.Queue, mqSub.RoutingKey, mqSub.Exchange, false, nil)
+		mqSub.Queue, routingKey, mqSub.Exchange, false, nil)
 	if err != nil {
 		return errors.Wrap(err, "failed to bind queue: %s")
 	}
