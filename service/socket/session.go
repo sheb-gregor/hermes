@@ -229,6 +229,11 @@ func (c *Session) writeToStream() {
 				return
 			}
 
+			c.log.WithFields(logrus.Fields{
+				"event":    message.Event,
+				"user_uid": c.userUUID,
+			}).Trace("write message to connection")
+
 		case <-ticker.C:
 			if err := c.pingWs(); err != nil {
 				c.log.WithError(err).Info("failed to ping socket")
@@ -302,6 +307,5 @@ func (c *Session) writeToClient(message *models.Message) error {
 			Error(unableToMarshal, message)
 		return err
 	}
-
 	return c.conn.WriteMessage(websocket.TextMessage, data)
 }
