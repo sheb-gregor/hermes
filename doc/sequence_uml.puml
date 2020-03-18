@@ -1,0 +1,50 @@
+@startuml
+CLI -> Config: Read config
+
+Config -> Logger: Get service name config
+CLI -> Logger: Init logger with service name
+
+Logger -> Service: Get the logger
+Config -> Service: Get the config
+CLI -> Service: Initialize service
+
+Service -> Chief: Initialize Chief
+Service -> Hub: Initialize Hub
+
+Hub -> SyncStorage: Initialize Session storage
+Hub -> SyncStorage: Initialize UserSessions
+Hub -> SyncStorage: Initialize LiveSessions
+
+Logger -> Hub: Get logger with worker field
+Hub -> Service: Initialized Hub
+
+Logger -> RabbitConsumer: Get logger with worker field
+Config -> Service: Get RabbitQm config
+Hub -> RabbitConsumer: Get out bus socket event
+
+Service -> RabbitConsumer: Initialize RabbitConsumer
+
+RabbitConsumer -> RabbitConsumer: Initialize ManageQueue channel
+
+RabbitConsumer -> Hub: ManageQueue
+Hub -> Hub: Set subscriptions adder
+
+Logger -> WebServer: Get logger with worker field
+Hub -> WebServer: Get Hub Context
+Hub -> WebServer: Get Hub Event Bus
+Service -> WebServer: Initialize WebServer
+
+Config -> Service: Get Api configuration
+
+WebServer -> "WebServer(HTTPHandler)": Get Chi http handler
+"WebServer(HTTPHandler)" -> "WebServer(HTTPHandler)": Intialize sessions Redis Storage
+"WebServer(HTTPHandler)" -> "WebServer(HTTPHandler)": Set HTTP Handler Routes
+"WebServer(HTTPHandler)" -> "WebServer(HTTPHandler)": Initialized HTTPHandler
+
+WebServer -> LancerKit: Initialize the WebServer
+WebServer -> Service: Initialized WebServer
+
+Service -> Chief: Initialize Workers
+Service -> CLI: Chief Service interface
+CLI -> Service: Run Service
+@enduml
