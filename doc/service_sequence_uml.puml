@@ -1,0 +1,14 @@
+@startuml
+User -> Client: load web page
+Client -> Client: generate uuid
+Client -> HermesHandler: handshake event msg
+Client -> HermesHandler: send subscr event for predefined subs
+HermesHandler -> Redis: get session user id
+HermesHandler -> Socket: upgrade WS conn
+HermesHandler -> Socket: create new Client session(open new client conn)
+HermesHandler -> Hub: send new Socket event on Hub bus and add new session
+HermesHandler -> Hub: add new session
+Hub -> Rabbit: add new Queue for subscr
+Rabbit -> Socket: start subscr listening for new messages
+Hub -> Socket: control the conn with ping/pong with time period
+@enduml

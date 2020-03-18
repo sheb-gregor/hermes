@@ -1,0 +1,53 @@
+@startuml
+interface "AMPQ Connection" as AMPQConn
+interface "AMPQ Channel" as AMPQCh
+
+Chief ..> [Hub]
+Chief ..> [RabbitConsumer]
+Chief ..> [WebServer]
+
+
+AMPQConn ..> [RabbitConsumer]
+AMPQCh ..> [RabbitConsumer]
+
+[Hub] --> [RabbitConsumer] : OutBus
+[Hub] --> [HTTPHandler] : Event
+
+[EventStream] --> [Hub]
+[EventStream] --> [Session] : Bus
+
+[Event] --> [EventStream]
+
+[EventKind] --> [Event]
+
+[Session] --> [Event]
+
+[Message] --> [Event]
+[Message] --> [Session]
+
+[SyncStorage] --> [Session]
+WebSocketConnection ..> [Session]
+
+[HTTPHandler] --> [WebServer]
+[Storage] --> [HTTPHandler]
+Redis ..> [Storage] : Pool
+
+[ManageQueue] --> [Hub] : SubscriptionsAdder
+
+[RabbitMQConfig] --> [RabbitConsumer]
+
+[WebServer] --> Config
+
+[Logger] --> [RabbitConsumer]
+[Logger] --> [HTTPHandler]
+[Logger] --> [Hub]
+
+[ApiConfig] --> [Config]
+[LogConfig] --> [Config]
+[RabbitMQConfig] --> [Config]
+[RedisConfig] --> [Config]
+
+ConfigFile ..> [Config]
+
+[MQSubscription] --> [RabbitMQConfig]
+@enduml
