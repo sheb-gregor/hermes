@@ -4,11 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net/http"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/nats-io/go-nats"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"gitlab.inn4science.com/ctp/hermes/models"
@@ -16,7 +16,7 @@ import (
 
 const (
 	// Time allowed to read the next pong message from the peer.
-	pongWait = 60 * time.Second
+	pongWait = 30 * time.Second
 
 	// Send pings to peer with this period. Must be less than pongWait.
 	pingPeriod = (pongWait * 9) / 10
@@ -24,12 +24,15 @@ const (
 	// Maximum message size allowed from peer.
 	maxMessageSize = 512
 
+	maxChanLen = 256
+
 	// Key for wildcard subscriptions
 	WildcardSubscription = "***"
 )
 
 const (
 	EvHandshake     = "handshake"
+	EvAuthorize     = "authorize"
 	EvSubscribe     = "subscribe"
 	EvUnsubscribe   = "unsubscribe"
 	EvStatusChannel = "ws_status"
@@ -41,26 +44,29 @@ const (
 	unableToMarshal   = "unable to marshal data:"
 )
 
+type AuthProviderF func(models.AuthRequest) (*models.AuthResponse, int, error)
+
 // Session is a middleman between the websocket connection and the hub.
 type Session struct {
 	conn *websocket.Conn
 
-	connUID  int64
-	userUUID string
-
 	bus    EventStream
 	ctx    context.Context
 	cancel context.CancelFunc
+
+	info models.SessionInfo
 
 	// Buffered channel of outbound MessagesChan.
 	send                 chan *models.Message
 	log                  *logrus.Entry
 	subscriptionsChannel activeChannel
 	subscriptionsEvent   activeEvent
+
+	authProvider AuthProviderF
 }
 
 func NewSession(ctx context.Context, log *logrus.Entry, bus EventStream,
-	conn *websocket.Conn, uid int64, userUUID string) *Session {
+	conn *websocket.Conn, info models.SessionInfo, authProvider AuthProviderF) *Session {
 
 	ctx, cancel := context.WithCancel(ctx)
 
@@ -69,10 +75,10 @@ func NewSession(ctx context.Context, log *logrus.Entry, bus EventStream,
 		cancel:               cancel,
 		conn:                 conn,
 		bus:                  bus,
-		connUID:              uid,
-		userUUID:             userUUID,
-		log:                  log.WithField("connUID", uid).WithField("userUUID", userUUID),
-		send:                 make(chan *models.Message, nats.DefaultMaxChanLen*2),
+		info:                 info,
+		authProvider:         authProvider,
+		log:                  log.WithField("session_id", info.ID),
+		send:                 make(chan *models.Message, maxChanLen/2),
 		subscriptionsChannel: activeChannel{new(sync.Map)},
 		subscriptionsEvent:   activeEvent{new(sync.Map)},
 	}
@@ -94,7 +100,7 @@ func (c *Session) isSubscribed(channel, event string) bool {
 }
 
 func (c *Session) addSubscription(channel, event string) {
-	// MetricsCollector.Add(metrics.MKey("sessionStorage." + c.userUUID + ".addSubscription"))
+	// MetricsCollector.Add(metrics.MKey("sessionStorage." + c.userUID + ".addSubscription"))
 	if channel == "" {
 		return
 	}
@@ -119,6 +125,11 @@ func (c *Session) rmSubscription(channel string) {
 	c.subscriptionsEvent.Store(channel, map[string]bool{})
 }
 
+type wsMessage struct {
+	data  []byte
+	mType int
+}
+
 // readStream pumps MessagesChan from the websocket connection to the hub.
 //
 // The application runs readPump in a per-connection goroutine. The application
@@ -127,58 +138,32 @@ func (c *Session) rmSubscription(channel string) {
 // nolint:funlen
 func (c *Session) readStream() {
 	defer func() {
-		c.log.Info("connection closed for user:", c.connUID)
-		c.bus <- &Event{Kind: EKUnregister, SessionID: c.connUID}
+		c.log.Info("connection closed")
+		c.bus <- &Event{Kind: EKUnregister, SessionID: c.info.ID}
 	}()
 
 	c.conn.SetReadLimit(maxMessageSize)
 	c.conn.SetPongHandler(func(string) error { return c.conn.SetReadDeadline(time.Now().Add(pongWait)) })
 
-	var needToStop bool
-	type wsMessage struct {
-		data  []byte
-		mType int
-	}
-	incomingMessages := make(chan wsMessage)
+	readerCtx, cancelReader := context.WithCancel(c.ctx)
+	incomingMessages := make(chan wsMessage, 2)
 
-	go func(im chan wsMessage) {
-		for {
-			if needToStop {
-				close(im)
-				return
-			}
-			msgCode, message, err := c.conn.ReadMessage()
-			if err != nil {
-				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-					c.log.WithError(err).Info("socket closed")
-				} else if err != io.EOF {
-					c.log.Info("error while reading from client:", err)
-				}
-				return
-			}
-
-			// MetricsCollector.Add(metrics.MKey("sessionStorage." + c.userUUID + ".readMessage"))
-			if message == nil {
-				c.log.Debug("nil message from read channel")
-				continue
-			}
-
-			im <- wsMessage{data: message, mType: msgCode}
-		}
-	}(incomingMessages)
+	go c.readMessages(readerCtx, incomingMessages)
 
 	for {
 		select {
 		case <-c.ctx.Done():
 			// all the necessary things will be done on a deferred call
-			needToStop = true
+			cancelReader()
+
 			return
 		case m := <-incomingMessages:
 			switch m.mType {
 			case websocket.PingMessage, websocket.PongMessage:
 				c.log.Trace("ws proto synchronization")
+				continue
 			case websocket.CloseMessage:
-				needToStop = true
+				cancelReader()
 				return
 			}
 			if err := c.processIncomingMessage(m.data); err != nil {
@@ -190,6 +175,34 @@ func (c *Session) readStream() {
 
 }
 
+func (c *Session) readMessages(ctx context.Context, im chan wsMessage) {
+	for {
+		select {
+		case <-ctx.Done():
+			close(im)
+			return
+		default:
+			msgCode, message, err := c.conn.ReadMessage()
+			if err != nil {
+				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+					c.log.WithError(err).Info("socket closed")
+				} else if err != io.EOF {
+					c.log.Info("error while reading from client:", err)
+				}
+				return
+			}
+
+			// MetricsCollector.Add(metrics.MKey("sessionStorage." + c.userUID + ".readMessage"))
+			if message == nil {
+				c.log.Debug("nil message from read channel")
+				continue
+			}
+
+			im <- wsMessage{data: message, mType: msgCode}
+		}
+	}
+}
+
 // writeToStream pumps MessagesChan from the hub to the websocket connection.
 //
 // A goroutine running writePump is started for each connection. The
@@ -199,9 +212,9 @@ func (c *Session) writeToStream() {
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
 		ticker.Stop()
-		c.log.Info("close connection for user:", c.connUID)
+		c.log.Info("close connection")
 
-		c.bus <- &Event{Kind: EKUnregister, SessionID: c.connUID}
+		c.bus <- &Event{Kind: EKUnregister, SessionID: c.info.ID}
 	}()
 
 	for {
@@ -229,10 +242,7 @@ func (c *Session) writeToStream() {
 				return
 			}
 
-			c.log.WithFields(logrus.Fields{
-				"event":    message.Event,
-				"user_uid": c.userUUID,
-			}).Trace("write message to connection")
+			c.log.WithField("event", message.Event).Trace("write message to connection")
 
 		case <-ticker.C:
 			if err := c.pingWs(); err != nil {
@@ -270,21 +280,45 @@ func (c *Session) processIncomingMessage(raw []byte) error {
 
 	switch userMsg.Event {
 	case EvHandshake:
-		// MetricsCollector.Add(metrics.MKey("sessionStorage." + c.userUUID + ".EvHandshake"))
+		// MetricsCollector.Add(metrics.MKey("sessionStorage." + c.userUID + ".EvHandshake"))
 
-		c.bus <- &Event{Kind: EKHandshake, SessionID: c.connUID}
+		c.bus <- &Event{Kind: EKHandshake, SessionID: c.info.ID}
+
+	case EvAuthorize:
+		resultStatus := "success"
+
+		if c.info.UserID != "" {
+			c.send <- &models.Message{Channel: EvStatusChannel, Event: EvAuthorize,
+				Data: map[string]interface{}{EvAuthorize: resultStatus, "resultCode": http.StatusOK},
+			}
+			return nil
+		}
+
+		code, err := c.verifyAuth(userMsg.Command)
+		if err != nil {
+			resultStatus = "failed"
+			c.log.WithError(err).Error("failed to verifyAuth")
+		} else {
+			c.bus <- &Event{Kind: EKAuthorize, SessionID: c.info.ID, SessionInfo: &c.info}
+		}
+
+		c.send <- &models.Message{Channel: EvStatusChannel, Event: EvAuthorize,
+			Data: map[string]interface{}{EvAuthorize: resultStatus, "resultCode": code},
+		}
+
 	case EvSubscribe:
-		// MetricsCollector.Add(metrics.MKey("sessionStorage." + c.userUUID + ".EvSubscribe"))
+		// MetricsCollector.Add(metrics.MKey("sessionStorage." + c.userUID + ".EvSubscribe"))
 
 		channel := userMsg.Command["channel"]
 		event := userMsg.Command["event"]
 		c.addSubscription(channel, event)
 
 	case EvUnsubscribe:
-		// MetricsCollector.Add(metrics.MKey("sessionStorage." + c.userUUID + ".EvUnsubscribe"))
+		// MetricsCollector.Add(metrics.MKey("sessionStorage." + c.userUID + ".EvUnsubscribe"))
 
 		channel := userMsg.Command["channel"]
 		c.rmSubscription(channel)
+
 	case EvPong:
 		c.log.Debug("client synchronization - pong received")
 	}
@@ -292,8 +326,30 @@ func (c *Session) processIncomingMessage(raw []byte) error {
 	return nil
 }
 
+func (c *Session) verifyAuth(command map[string]string) (int, error) {
+	c.info.Token = command[models.FieldToken]
+	c.info.Origin = command[models.FieldOrigin]
+	c.info.Role = command[models.FieldRole]
+
+	authData, code, err := c.authProvider(models.AuthRequest{
+		SessionID: c.info.ID,
+		Token:     c.info.Token,
+		UserAgent: c.info.UserAgent,
+		IP:        c.info.IP,
+		Origin:    c.info.Origin,
+		Role:      c.info.Role,
+	})
+	if err != nil {
+		return code, err
+	}
+
+	c.info.UserID = authData.UserID
+	// c.log = c.log.WithField("user_id", authData.UserID)
+	return code, nil
+}
+
 func (c *Session) writeToClient(message *models.Message) error {
-	// MetricsCollector.Add(metrics.MKey("sessionStorage." + c.userUUID + ".writeToClient"))
+	// MetricsCollector.Add(metrics.MKey("sessionStorage." + c.userUID + ".writeToClient"))
 
 	var msg interface{} = message
 	if message.Channel != EvStatusChannel {
@@ -307,5 +363,6 @@ func (c *Session) writeToClient(message *models.Message) error {
 			Error(unableToMarshal, message)
 		return err
 	}
+
 	return c.conn.WriteMessage(websocket.TextMessage, data)
 }

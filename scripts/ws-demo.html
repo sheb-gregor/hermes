@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<meta charset="utf-8"/>
+<title>WebSocket Test</title>
+<style lang="css">
+  .main-container {
+    width: 60%;
+    min-width: 800px;
+    margin: 0 auto;
+    padding: 20px;
+    /*background: #9E9E9E;*/
+    display: flex;
+    flex-direction: column;
+    justify-content: space-around;
+
+  }
+
+  .management-block {
+    display: flex;
+    flex-direction: row;
+    width: 100%;
+
+  }
+
+  .event-block {
+    background: lavender;
+    overflow-wrap: break-word;
+    display: flex;
+    flex-direction: column;
+    margin: 12pt;
+    padding: 12pt;
+  }
+
+  .event-header {
+
+  }
+
+  .field {
+    display: flex;
+    flex-direction: row;
+  }
+
+  .field-name {
+    padding: 4pt 4pt 4pt 0;
+    margin: 4pt 4pt 4pt 4pt;
+    width: 120px;
+  }
+
+  .field-value {
+    padding: 4pt 4pt 4pt 0;
+    margin: 4pt 4pt 4pt 4pt;
+  }
+</style>
+
+<script type="text/javascript">
+    let pageState = {
+        wsUri: "ws://localhost:8090/_ws/subscribe",
+        auth: {
+            token: "",
+            role: "user",
+            origin: "user",
+        },
+        websocket: null,
+        output: null,
+        cleanUpInterval: null,
+    };
+
+    function eventMsgToHTML(eventKind, data) {
+        let table = '<div class="event-сontent">';
+        for (let key in data) {
+            table += '<div class="field">';
+            table += '<div class="field-name"> <b>' + key + ":</b></div>";
+            if (typeof data[key] == 'object') {
+                table += '<div class="field-value">' + JSON.stringify(data[key], null, '  ') + "</div>";
+            } else {
+                table += '<div class="field-value">' + data[key] + "</div>";
+            }
+            table += '</div>';
+        }
+        table += '</div>';
+
+        return '<div class="event-header"> <span style="color: blue;"> ' + eventKind + ': </span> </div>' + table
+    }
+
+    function writeToScreen(message) {
+        let pre = document.createElement("div");
+        pre.setAttribute('class', 'event-block ev');
+        pre.innerHTML = message;
+        pageState.output.prepend(pre);
+    }
+
+    function doSend(message) {
+        writeToScreen(eventMsgToHTML("SENT", message));
+        pageState.websocket.send(JSON.stringify(message));
+    }
+
+
+    function onOpen(evt) {
+        writeToScreen("CONNECTED");
+        let json = {
+            channel: "ws_status",
+            event: "handshake"
+        };
+
+        doSend(json);
+
+        writeToScreen("CONNECTED");
+
+        let subs = [
+            // {channel: "***", event: "***"},
+            // {channel: "ctp.notifications.prices"},
+            // {channel: "ctp.notifications.orders", event: "ctp.notifications.orders"},
+            // {channel: "ctp.notifications.accounts", event: "ctp.notifications.accounts"},
+            // {channel: "ctp.notifications.deposits", event: "ctp.notifications.deposits"},
+        ];
+
+
+        for (let i in subs) {
+            doSend({
+                channel: "ws_status",
+                event: "subscribe",
+                command: {channel: subs[i].channel, event: subs[i].event},
+            });
+        }
+    }
+
+    function onError(evt) {
+        writeToScreen('<span style="color: red;">ERROR:</span> ' + evt.data);
+    }
+
+    function onClose(evt) {
+        writeToScreen("DISCONNECTED");
+    }
+
+    function onMessage(evt) {
+        let response = JSON.parse(evt.data)
+
+        writeToScreen(eventMsgToHTML('RESPONSE', response));
+
+        if (response.event === "ping") {
+            let json = {
+                event: "pong",
+                channel: "ws_status"
+            };
+            doSend(json);
+        }
+
+    }
+
+    function openWebSocket() {
+        pageState.websocket = new WebSocket(pageState.wsUri);
+        pageState.websocket.onopen = function (evt) {
+            onOpen(evt)
+        };
+        pageState.websocket.onclose = function (evt) {
+            onClose(evt)
+        };
+        pageState.websocket.onmessage = function (evt) {
+            onMessage(evt)
+        };
+        pageState.websocket.onerror = function (evt) {
+            onError(evt)
+        };
+    }
+
+    function init() {
+        document.getElementById("url-val").innerText = pageState.wsUri;
+        document.getElementById("token").value = pageState.auth.token;
+        document.getElementById("role").value = pageState.auth.role;
+        document.getElementById("origin").value = pageState.auth.origin;
+
+        pageState.output = document.getElementById("output");
+        openWebSocket();
+    }
+
+
+    function cleanUp() {
+        let events = document.getElementsByClassName('ev');
+
+
+        while (events[0]) {
+            events[0].parentNode.removeChild(events[0])
+        }
+    }
+
+    function autoCleanUp() {
+        if ( pageState.cleanUpInterval === null ){
+            pageState.cleanUpInterval = setInterval(cleanUp, 10 * 1000);
+        } else {
+            clearInterval(pageState.cleanUpInterval)
+        }
+    }
+
+
+    function setUrl() {
+        pageState.wsUri = document.getElementById("url").value;
+
+        cleanUp();
+        init();
+    }
+
+
+    function authorize() {
+        let token = document.getElementById("token").value;
+        let origin = document.getElementById("origin").value;
+        let role = document.getElementById("role").value;
+
+        pageState.auth = {token, origin, role};
+
+        doSend({
+            channel: "ws_status",
+            event: "authorize",
+            command: {token, origin, role},
+        });
+    }
+
+    function subscribe() {
+        let channel = document.getElementById("channel").value;
+        let event = document.getElementById("event").value;
+
+
+        doSend({
+            channel: "ws_status",
+            event: "subscribe",
+            command: {channel, event},
+        });
+    }
+
+
+    window.addEventListener("load", init, false);
+
+</script>
+
+<div class="main-container">
+  <h2>Hermes WebSocket Test Page</h2>
+  <div class="management-block">
+    <div class="event-block">
+      <div class="field">
+        <div class="field-name"><label for="url">URL</label></div>
+        <input id="url" class="field-value">
+      </div>
+      <div class="field">
+        <div class="field-name"><label for="url-val">Current</label></div>
+        <label id="url-val" class="field-value"> [not set] </label>
+      </div>
+
+      <div class="field">
+        <button onclick="setUrl()"> Set</button>
+        <button onclick="cleanUp()"> Clean Events</button>
+        <button onclick="autoCleanUp()"> Toggle AutoCLean</button>
+      </div>
+    </div>
+
+    <div class="event-block">
+      <div class="field">
+        <div class="field-name"><label for="token">Token</label></div>
+        <input id="token" class="field-value">
+      </div>
+      <div class="field">
+        <div class="field-name"><label for="origin">Origin</label></div>
+        <input id="origin" class="field-value">
+      </div>
+      <div class="field">
+        <div class="field-name"><label for="role">Role</label></div>
+        <input id="role" class="field-value">
+      </div>
+      <div class="field">
+        <button onclick="authorize()"> Authorize</button>
+      </div>
+    </div>
+
+    <div class="event-block">
+      <div class="field">
+        <div class="field-name"><label for="channel">Channel:</label></div>
+        <input id="channel" class="field-value">
+      </div>
+      <div class="field">
+        <div class="field-name"><label for="event">Event:</label></div>
+        <input id="event" class="field-value">
+      </div>
+      <div class="field">
+        <button onclick="subscribe()"> Subscribe</button>
+      </div>
+    </div>
+  </div>
+  <br>
+  <div id="output"></div>
+</div>
+

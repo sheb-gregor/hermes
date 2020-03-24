@@ -45,11 +45,11 @@ func InitChief(logger *logrus.Entry, cfg config.Cfg) uwe.Chief {
 
 	hub := socket.NewHub(logger.WithField("worker", WorkerHub))
 
-	rabbitConsumer, qManager := NewRabbitConsumer(
+	rabbitConsumer, _ := NewRabbitConsumer(
 		logger.WithField("worker", WorkerRabbitConsumer), cfg.RabbitMQ, hub.EventBus())
-	hub.SetSubscriptionsAdder(qManager)
+	// hub.SetSubscriptionsAdder(qManager)
 
-	webServer := GetServer(logger.WithField("worker", WorkerWsAPI), cfg, hub.Context(), hub.EventBus())
+	webServer := GetServer(logger.WithField("worker", WorkerWsAPI), cfg, hub.Context(), hub.Communicator())
 
 	chief.AddWorker(WorkerHub, hub)
 	chief.AddWorker(WorkerWsAPI, webServer)

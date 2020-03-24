@@ -15,10 +15,15 @@ import (
 
 func main() {
 	cfg := config.RabbitMQ{
-		Host:     "127.0.0.1:5672",
-		User:     noble.Secret{}.New("raw:user"),
-		Password: noble.Secret{}.New("raw:p4s5w0rd"),
-		Subs: []config.MqSubscription{
+		Auth: config.RabbitAuth{
+			Host:            "127.0.0.1:5672",
+			User:            noble.Secret{}.New("raw:user"),
+			Password:        noble.Secret{}.New("raw:p4s5w0rd"),
+			ConsumerTag:     "hermes_pub",
+			CreateExchanges: false,
+			StrictMode:      false,
+		},
+		Subs: []config.Exchange{
 			{
 				Exchange:     "ctp.notifications.prices",
 				ExchangeType: "fanout",
@@ -35,13 +40,12 @@ func main() {
 				Queue:        "ctp.hermes.prices",
 			},
 		},
-		ConsumerTag: "hermes_pub",
 	}
 	wg := sync.WaitGroup{}
 	for _, sub := range cfg.Subs {
 		wg.Add(1)
-		go func(sub config.MqSubscription) {
-			runPublishLoad(cfg.URL(), sub.Exchange, sub.ExchangeType)
+		go func(sub config.Exchange) {
+			runPublishLoad(cfg.Auth.URL(), sub.Exchange, sub.ExchangeType)
 			wg.Done()
 		}(sub)
 	}

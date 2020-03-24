@@ -13,13 +13,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-
-	"gopkg.in/yaml.v2"
-
 	"github.com/gorilla/websocket"
 	"github.com/pkg/errors"
 	"gitlab.inn4science.com/ctp/hermes/config"
 	"gitlab.inn4science.com/ctp/hermes/metrics"
+	"gopkg.in/yaml.v2"
 )
 
 type client struct {
@@ -183,7 +181,7 @@ func (client *client) sub(cfg config.RabbitMQ, metricsCollector *metrics.SafeMet
 	}
 }
 
-func (client *client) writeMsg(subsConfig config.MqSubscription) {
+func (client *client) writeMsg(subsConfig config.Exchange) {
 	subs := subData{
 		Event:   "subscribe",
 		Command: map[string]string{},

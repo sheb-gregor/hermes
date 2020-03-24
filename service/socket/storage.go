@@ -4,15 +4,12 @@ import (
 	"sync"
 
 	"github.com/pkg/errors"
+	"gitlab.inn4science.com/ctp/hermes/models"
 )
 
-type (
-	syncStorage struct {
-		*sync.Map
-	}
+type syncStorage struct{ *sync.Map }
 
-	wsLiveSessions syncStorage
-)
+type wsLiveSessions syncStorage
 
 type wsSessionStorage syncStorage
 
@@ -60,38 +57,52 @@ func (a *activeEvent) getSubscribeMap(channel string) map[string]bool {
 	return evenSubs
 }
 
-type wsUsersSessions syncStorage
+type wsUsersSessions struct {
+	sync.RWMutex
+	sync.Map
+}
 
-func (a wsUsersSessions) addSessionID(userUID string, connUID int64) {
+func (a *wsUsersSessions) addSessionID(userUID string, session models.SessionInfo) {
+	a.Lock()
+	defer a.Unlock()
+
 	value, ok := a.Load(userUID)
 	if !ok {
 		value = map[int64]struct{}{}
 	}
 
-	evenSubs, _ := value.(map[int64]struct{})
-	evenSubs[connUID] = struct{}{}
-	a.Store(userUID, evenSubs)
+	sessions, ok := value.(map[int64]models.SessionInfo)
+	if !ok {
+		sessions = map[int64]models.SessionInfo{}
+	}
+	sessions[session.ID] = session
+	a.Store(userUID, sessions)
 }
 
-func (a wsUsersSessions) rmSessionID(userUID string, connUID int64) {
+func (a *wsUsersSessions) rmSessionID(userUID string, sessionID int64) {
+	a.Lock()
+	defer a.Unlock()
+
 	value, ok := a.Load(userUID)
 	if !ok {
 		return
 	}
 
-	evenSubs, _ := value.(map[int64]struct{})
-	delete(evenSubs, connUID)
+	sessions, _ := value.(map[int64]models.SessionInfo)
+	delete(sessions, sessionID)
 
-	a.Store(userUID, evenSubs)
+	a.Store(userUID, sessions)
 }
 
-func (a wsUsersSessions) getSessions(userUID string) map[int64]struct{} {
+func (a *wsUsersSessions) getSessions(userUID string) map[int64]models.SessionInfo {
+	a.RLock()
+	defer a.RUnlock()
+
 	value, ok := a.Load(userUID)
 	if !ok {
-		return map[int64]struct{}{}
+		return map[int64]models.SessionInfo{}
 	}
 
-	evenSubs, _ := value.(map[int64]struct{})
-
-	return evenSubs
+	sessions, _ := value.(map[int64]models.SessionInfo)
+	return sessions
 }

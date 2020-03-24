@@ -19,13 +19,15 @@ type EventKind int
 const (
 	EKNewSession EventKind = 1 + iota
 	EKHandshake
+	EKAuthorize
 	EKMessage
 	EKUnregister
 )
 
 type Event struct {
-	Kind      EventKind
-	SessionID int64
-	Session   *Session
-	Message   *models.Message
+	Kind        EventKind
+	SessionID   int64
+	Session     *Session
+	SessionInfo *models.SessionInfo
+	Message     *models.Message
 }

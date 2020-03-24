@@ -14,15 +14,6 @@ import (
 	"gitlab.inn4science.com/ctp/hermes/service/socket"
 )
 
-const (
-	RHeaderUUID       = "uuid"
-	RHeaderVisibility = "visibility"
-	RHeaderEvent      = "event_type"
-
-	VisibilityBroadcast = "broadcast"
-	VisibilityDirect    = "direct"
-)
-
 type RabbitConsumer struct {
 	config config.RabbitMQ
 	logger *logrus.Entry
@@ -52,7 +43,7 @@ func NewRabbitConsumer(logger *logrus.Entry, configuration config.RabbitMQ,
 func (worker *RabbitConsumer) Init() error {
 	var err error
 	rabbitCfg := worker.config
-	worker.conn, err = amqp.Dial(rabbitCfg.URL())
+	worker.conn, err = amqp.Dial(rabbitCfg.Auth.URL())
 	if err != nil {
 		return errors.Wrap(err, "failed to connect to RabbitMQ")
 	}
@@ -72,7 +63,7 @@ func (worker *RabbitConsumer) Init() error {
 	return worker.ensureExchange(rabbitCfg.Common)
 }
 
-func (worker *RabbitConsumer) ensureExchange(mqSub config.MqSubscription) error {
+func (worker *RabbitConsumer) ensureExchange(mqSub config.Exchange) error {
 	err := worker.channel.ExchangeDeclare(
 		mqSub.Exchange, mqSub.ExchangeType,
 		true, false, false, false, nil,
@@ -83,7 +74,7 @@ func (worker *RabbitConsumer) ensureExchange(mqSub config.MqSubscription) error 
 	return nil
 }
 
-func (worker *RabbitConsumer) ensureQueue(mqSub config.MqSubscription) error {
+func (worker *RabbitConsumer) ensureQueue(mqSub config.Exchange) error {
 	_, err := worker.channel.QueueDeclare(
 		mqSub.Queue, false, false, false, false, nil)
 	if err != nil {
@@ -104,7 +95,7 @@ func (worker *RabbitConsumer) ensureQueue(mqSub config.MqSubscription) error {
 	return nil
 }
 
-func (worker *RabbitConsumer) runQueueSub(ctx context.Context, sub config.MqSubscription, out chan amqp.Delivery) {
+func (worker *RabbitConsumer) runQueueSub(ctx context.Context, sub config.Exchange, out chan amqp.Delivery) {
 	if _, ok := worker.queueCancelers[sub.Queue]; ok {
 		return
 	}
@@ -117,7 +108,7 @@ func (worker *RabbitConsumer) runQueueSub(ctx context.Context, sub config.MqSubs
 		WithField("queue", sub.Queue).
 		WithField("exchange", sub.Exchange)
 
-	go func(subscription config.MqSubscription) {
+	go func(subscription config.Exchange) {
 		defer worker.wg.Done()
 
 		if err := worker.startConsumingRoutine(subCtx, subscription, out); err != nil {
@@ -163,40 +154,37 @@ func (worker *RabbitConsumer) Run(wCtx uwe.Context) error {
 					"delivery_tag": message.DeliveryTag,
 					"message_id":   message.MessageId,
 					"content_type": message.ContentType,
-					"visibility":   message.Headers[RHeaderVisibility],
-					"uuid":         message.Headers[RHeaderUUID],
+					"event_kind":   message.Headers[models.RHeaderEvent],
+					"visibility":   message.Headers[models.RHeaderVisibility],
 					"body":         string(message.Body),
 				}).
 				Trace("received a deliveries from consumer")
 
-			visibility, ok := message.Headers[RHeaderVisibility].(string)
-			if !ok {
-				logger.Warn("message don't have RHeaderVisibility")
-				continue
+			params, err := models.ParseRabbitHeader(message)
+			if err != nil {
+				logger.WithError(err).Warn("invalid header")
 			}
 
-			uuid, ok := message.Headers[RHeaderUUID].(string)
-			if !ok && visibility == VisibilityDirect {
-				logger.Warn("message don't have RHeaderUUID")
-				continue
-			}
-
-			event, ok := message.Headers[RHeaderEvent].(string)
-			if !ok {
-				logger.Warn("message don't have RHeaderEvent")
+			if params.Visibility == models.VisibilityInternal {
 				continue
 			}
 
 			worker.outBus <- &socket.Event{
 				Kind: socket.EKMessage,
 				Message: &models.Message{
-					Broadcast: visibility == VisibilityBroadcast,
-					Channel:   message.Exchange,
-					Event:     event,
-					UserUID:   uuid,
-					Data:      map[string]interface{}{event: json.RawMessage(message.Body)},
+					Meta: models.MessageMeta{
+						Broadcast: params.Broadcast,
+						Role:      params.Role,
+						UserUID:   params.UUID,
+						TTL:       params.CacheTTL,
+					},
+
+					Channel: message.Exchange,
+					Event:   params.Event,
+					Data:    map[string]interface{}{params.Event: json.RawMessage(message.Body)},
 				},
 			}
+
 		case <-wCtx.Done():
 			cancel()
 			worker.wg.Wait()
@@ -207,7 +195,7 @@ func (worker *RabbitConsumer) Run(wCtx uwe.Context) error {
 }
 
 func (worker *RabbitConsumer) startConsumingRoutine(ctx context.Context,
-	sub config.MqSubscription, out chan amqp.Delivery) error {
+	sub config.Exchange, out chan amqp.Delivery) error {
 	logger := worker.logger.
 		WithField("queue", sub.Queue).
 		WithField("exchange", sub.Exchange)
@@ -218,7 +206,8 @@ func (worker *RabbitConsumer) startConsumingRoutine(ctx context.Context,
 	}
 
 	consume, err := worker.channel.Consume(
-		sub.Queue, worker.config.GetConsumerTag(sub.Queue), true, false, false, false, nil)
+		sub.Queue, worker.config.Auth.GetConsumerTag(sub.Queue),
+		true, false, false, false, nil)
 	if err != nil {
 		logger.WithError(err).Error("failed to register a consumer")
 		return errors.Wrap(err, "failed to register a consumer")

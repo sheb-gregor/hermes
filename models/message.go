@@ -1,10 +1,27 @@
 package models
 
-type Message struct {
-	Broadcast bool   `json:"broadcast"`
-	Channel   string `json:"channel"`
-	Event     string `json:"event"`
+const (
+	ActionAddQueue = 1
+	ActionRmQueue  = -1
+)
+
+type ManageQueue struct {
+	Queue  string
+	Action int
+}
+
+type MessageMeta struct {
+	Broadcast bool   `json:"-"`
+	Role      string `json:"-"`
+	TTL       int64  `json:"-"`
 	UserUID   string `json:"-"`
+}
+
+type Message struct {
+	Meta MessageMeta `json:"-"`
+
+	Channel string `json:"channel"`
+	Event   string `json:"event"`
 
 	Command map[string]string      `json:"command,omitempty"`
 	Data    map[string]interface{} `json:"data,omitempty"`
@@ -18,13 +35,3 @@ type ShortMessage struct {
 func (msg *Message) ToShort() ShortMessage {
 	return ShortMessage{Event: msg.Event, Data: msg.Data}
 }
-
-type ManageQueue struct {
-	Queue  string
-	Action int
-}
-
-const (
-	ActionAddQueue = 1
-	ActionRmQueue  = -1
-)

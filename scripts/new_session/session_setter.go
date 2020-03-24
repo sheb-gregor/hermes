@@ -2,30 +2,32 @@ package main
 
 import (
 	"encoding/base32"
+	"io/ioutil"
 	"log"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/lancer-kit/noble"
+
+	"gopkg.in/yaml.v2"
+
 	"gitlab.inn4science.com/ctp/hermes/config"
 	"gitlab.inn4science.com/ctp/hermes/sessions"
 )
 
-func main() {
-	cfg := config.RedisConf{
-		DevMode:       false,
-		MaxIdleConn:   5,
-		MaxActiveConn: 0,
-		IdleTimeout:   0,
-		PingInterval:  0,
-		Password:      noble.Secret{}.New("raw:"),
-		Host:          "redis:6379",
-	}
+type sessionSetterCfg struct {
+	Redis            config.RedisConf    `json:"redis" yaml:"redis"`
+	BoltDB           config.BoltDBConfig `json:"bolt_db" yaml:"bolt_db"`
+	CacheStorageType string              `json:"cache_storage_type" yaml:"cache_storage_type"`
+}
 
-	storage, err := sessions.NewStorage(cfg)
-	if err != nil {
-		log.Fatal(err)
-	}
+func main() {
+	cfg := getConfig("new_session.config.yaml")
+
+	storage := sessions.NewStorage(config.Cfg{
+		Redis:            cfg.Redis,
+		BoltDB:           cfg.BoltDB,
+		CacheStorageType: cfg.CacheStorageType,
+	})
 
 	for i := 0; i < 10; i++ {
 		binary, _ := uuid.New().MarshalBinary()
@@ -34,16 +36,32 @@ func main() {
 		time.Sleep(time.Second)
 		uid := uuid.New().String()
 
-		println("TOKEN:", token)
-		println("UUID:", uid)
+		log.Printf("TOKEN: %s UUID: %s", token, uid)
 
-		err = storage.SaveAsJSON(token, &sessions.Session{
+		err := storage.SaveAsJSON(token, &sessions.Session{
 			Token:          token,
 			UserID:         uid,
 			ExpirationTime: int64(time.Hour),
 			Active:         true,
 		}, int64(time.Hour))
+		if err != nil {
+			log.Fatalf("failed to save data: %s", err)
+		}
 	}
+}
+
+func getConfig(path string) sessionSetterCfg {
+	var cfg sessionSetterCfg
+
+	yamlFile, err := ioutil.ReadFile(path)
+	if err != nil {
+		log.Fatalf("can`t read confg file: %s", err)
+	}
+	err = yaml.Unmarshal(yamlFile, &cfg)
+	if err != nil {
+		log.Fatalf("can`t unmarshal the config file: %s", err)
+	}
+	return cfg
 }
 
 var _ = `
