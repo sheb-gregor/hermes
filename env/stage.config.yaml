@@ -2,6 +2,24 @@ api:
   host: 0.0.0.0
   port: 8090
 
+enable_auth: true
+
+authorized_services:
+  exchange: env:EXCHANGE_HERMES_ACCESS_KEY
+
+auth_providers:
+  user:
+    url: http://exchange:8080/v1/users/validate-session
+    access_key: env:HERMES_AUTH_PROVIDER_ACCESS_KEY
+    header: X-Api-Key
+    allowed_roles:
+      - user
+  admin:
+    url: http://exchange:8080/v1/users/validate-session
+    access_key: env:HERMES_AUTH_PROVIDER_ACCESS_KEY
+    header: X-Api-Key
+    allowed_roles:
+      - admin
 log:
   app_name: hermes
   level: "env:HERMES_LOG_LEVEL"

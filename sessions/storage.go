@@ -1,105 +1,31 @@
 package sessions
 
 import (
-	"encoding/json"
+	"log"
 
-	"github.com/gomodule/redigo/redis"
-	"github.com/pkg/errors"
 	"gitlab.inn4science.com/ctp/hermes/config"
 )
 
-const (
-	commandGet    = "GET"
-	commandSet    = "SET"
-	commandPing   = "PING"
-	commandExpire = "EX"
-	replyPong     = "PONG"
-)
-
-type Storage struct {
-	cfg  config.RedisConf
-	pool *redis.Pool
+type Storage interface {
+	CheckConn() error
+	CloseConnection() error
+	GetSession(key string) (*Session, error)
+	SaveAsJSON(key string, value interface{}, ttl int64) error
 }
 
-// NewStorage returns initialized instance of the `Repo`.
-func NewStorage(cfg config.RedisConf) (*Storage, error) {
-	if cfg.DevMode {
-		return &Storage{cfg: cfg, pool: nil}, nil
+func NewStorage(cfg config.Cfg) Storage {
+	switch cfg.CacheStorageType {
+	case config.BoltDBStorageType:
+		boltdb, err := NewBoltDBStorage(cfg.BoltDB)
+		if err != nil {
+			log.Fatalf("boltdb err: %s", err)
+		}
+		return boltdb
+	default:
+		redis, err := NewRedisStorage(cfg.Redis)
+		if err != nil {
+			log.Fatalf("redis err: %s", err)
+		}
+		return redis
 	}
-
-	pool := NewPool(cfg)
-	_, err := pool.Dial()
-	if err != nil {
-		return nil, errors.Wrap(err, "invalid redis configuration url")
-	}
-
-	return &Storage{cfg: cfg, pool: pool}, nil
-}
-
-func (s *Storage) CheckConn() error {
-	conn := s.pool.Get()
-	defer conn.Close()
-
-	reply, err := redis.String(conn.Do(commandPing))
-	if err != nil {
-		s.pool.Close()
-		return errors.Wrap(err, "connection failed")
-	}
-
-	if reply != replyPong {
-		return errors.New("failed to receive ping response from redis")
-	}
-
-	return nil
-}
-
-func (s *Storage) CloseConnection() error {
-	return s.pool.Close()
-}
-
-func (s *Storage) GetSession(key string) (*Session, error) {
-	if s.cfg.DevMode {
-		return &Session{UserID: key, Active: true}, nil
-	}
-
-	conn := s.pool.Get()
-	defer conn.Close()
-
-	rawSensitive, err := redis.Bytes(conn.Do(commandGet, key))
-	if err != nil && err.Error() == redis.ErrNil.Error() {
-		return nil, err
-	}
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to perform %s command, data wasn't retrieved", commandGet)
-	}
-
-	session := new(Session)
-	err = json.Unmarshal(rawSensitive, session)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to unmarshal raw value into target")
-	}
-
-	return session, nil
-}
-
-// SaveAsJSON saves any value as json object with provided key
-func (s *Storage) SaveAsJSON(key string, value interface{}, ttl int64) error {
-	if s.cfg.DevMode {
-		return nil
-	}
-
-	conn := s.pool.Get()
-	defer conn.Close()
-
-	sensitiveMarshalled, err := json.Marshal(value)
-	if err != nil {
-		return errors.Wrap(err, "failed to marshal data")
-	}
-
-	_, err = conn.Do(commandSet, key, sensitiveMarshalled, commandExpire, ttl)
-	if err != nil {
-		return errors.Wrapf(err, "failed to perform %s command, data wasn't saved", commandSet)
-	}
-
-	return nil
 }

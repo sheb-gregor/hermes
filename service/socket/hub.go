@@ -19,11 +19,11 @@ type Hub struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	subscriptionsAdder chan<- models.ManageQueue
+	// subscriptionsAdder chan<- models.ManageQueue
 
 	eventStream     EventStream
 	sessionStorage  wsSessionStorage
-	usersSessions   wsUsersSessions
+	usersSessions   *wsUsersSessions
 	liveConnections wsLiveSessions
 }
 
@@ -35,13 +35,24 @@ func NewHub(logger *logrus.Entry) *Hub {
 		ctx:    ctx,
 		cancel: cancel,
 
-		sessionStorage:  wsSessionStorage{new(sync.Map)},
-		usersSessions:   wsUsersSessions{new(sync.Map)},
-		liveConnections: wsLiveSessions{new(sync.Map)},
+		sessionStorage:  wsSessionStorage{Map: new(sync.Map)},
+		liveConnections: wsLiveSessions{Map: new(sync.Map)},
+		usersSessions:   &wsUsersSessions{},
 		eventStream:     make(EventStream, 256),
 	}
 }
 
+type HubCommunicator struct {
+	EventBus    EventStream
+	GetSessions func() map[string]map[int64]models.SessionInfo
+}
+
+func (h *Hub) Communicator() HubCommunicator {
+	return HubCommunicator{
+		EventBus:    h.eventStream,
+		GetSessions: h.getSessionListByUser,
+	}
+}
 func (h *Hub) EventBus() EventStream {
 	return h.eventStream
 }
@@ -50,26 +61,22 @@ func (h *Hub) Context() context.Context {
 	return h.ctx
 }
 
-func (h *Hub) SetSubscriptionsAdder(subscriptionsAdder chan<- models.ManageQueue) {
-	h.subscriptionsAdder = subscriptionsAdder
-}
-
 func (h *Hub) addSession(client *Session) {
 	// MetricsCollector.Add("hub.add_client")
 
-	h.subscriptionsAdder <- models.ManageQueue{
-		Queue:  client.userUUID,
-		Action: models.ActionAddQueue,
-	}
-
-	h.sessionStorage.Store(client.connUID, client)
-	h.usersSessions.addSessionID(client.userUUID, client.connUID)
-	h.liveConnections.Store(client.connUID, true)
+	h.sessionStorage.Store(client.info.ID, client)
+	h.liveConnections.Store(client.info.ID, true)
 
 	// Allow collection of memory referenced by the caller by doing all work in
 	// new goroutines.
 	go client.writeToStream()
 	go client.readStream()
+}
+
+func (h *Hub) authorizeSession(session models.SessionInfo) {
+	h.usersSessions.addSessionID(session.UserID, session)
+
+	// MetricsCollector.Add("hub.add_client")
 }
 
 func (h *Hub) rmSession(sessionID int64) {
@@ -81,14 +88,9 @@ func (h *Hub) rmSession(sessionID int64) {
 		return
 	}
 
-	h.subscriptionsAdder <- models.ManageQueue{
-		Queue:  client.userUUID,
-		Action: models.ActionAddQueue,
-	}
-
 	h.sessionStorage.Delete(sessionID)
-	h.usersSessions.rmSessionID(client.userUUID, sessionID)
 	h.liveConnections.Delete(sessionID)
+	h.usersSessions.rmSessionID(client.info.UserID, sessionID)
 
 	close(client.send)
 
@@ -138,11 +140,14 @@ func (h *Hub) Run(wCtx uwe.Context) error {
 				}
 
 				client.send <- &models.Message{Event: EvHandshake, Channel: EvStatusChannel}
-				h.log.Debug("Response sent to ", client.connUID)
+				h.log.Debug("Response sent to ", client.info.ID)
+
+			case EKAuthorize:
+				h.authorizeSession(*event.SessionInfo)
 
 			case EKMessage:
 				// MetricsCollector.Add("hub.MessagesChan")
-				if event.Message.Broadcast {
+				if event.Message.Meta.Broadcast {
 					h.broadCastAll(event.Message)
 				} else {
 					h.sendDirect(event.Message)
@@ -179,25 +184,59 @@ func (h Hub) closeSockets() {
 	})
 }
 
+func (h *Hub) getSessionListByUser() map[string]map[int64]models.SessionInfo {
+	result := map[string]map[int64]models.SessionInfo{}
+
+	h.usersSessions.Range(func(key interface{}, value interface{}) bool {
+		userID, ok := key.(string)
+		if !ok {
+			h.log.WithField("status", ok).Error("unable to cast key to userID")
+			return false
+		}
+
+		sessions, ok := value.(map[int64]models.SessionInfo)
+		if !ok {
+			h.log.WithField("status", ok).Error("unable to cast value to session list")
+			return false
+		}
+		result[userID] = sessions
+		return true
+	})
+
+	return result
+}
+
 func (h Hub) broadCastAll(message *models.Message) {
 	h.sessionStorage.Range(func(key interface{}, value interface{}) bool {
-		client, ok := value.(*Session)
+		session, ok := value.(*Session)
 		if !ok {
 			h.log.WithField("status", ok).Error("unable to cast value to client")
 			return false
 		}
 
-		client.send <- message
+		if message.Meta.Role != models.VRoleAny && session.info.Role != message.Meta.Role {
+			return true
+		}
+
+		session.send <- message
 		return true
 	})
 }
 
 func (h Hub) sendDirect(message *models.Message) {
-	for sessionID := range h.usersSessions.getSessions(message.UserUID) {
+	for sessionID := range h.usersSessions.getSessions(message.Meta.UserUID) {
 		session, err := h.sessionStorage.getByID(sessionID)
 		if err != nil {
 			h.log.WithError(err).Error("unable to get session by id")
 			continue
+		}
+
+		if message.Meta.Role != models.VRoleAny && session.info.Role != message.Meta.Role {
+			h.log.WithError(err).WithFields(logrus.Fields{
+				"event_role":   message.Meta.Role,
+				"session_role": session.info.Role,
+			}).Error("user role mismatch with required by event")
+			return
 		}
 
 		session.send <- message

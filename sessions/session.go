@@ -20,7 +20,7 @@ type Session struct {
 	UpdatedAt      int64  `db:"updated_at" json:"updatedAt"`
 }
 
-func (s *Session) Validate() error {
+func (s Session) Validate() error {
 	return validation.ValidateStruct(s,
 		validation.Field(&s.ExpirationTime, validation.Required),
 		validation.Field(&s.UserID, validation.Required),

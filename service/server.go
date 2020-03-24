@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"runtime"
 	"time"
@@ -10,22 +9,25 @@ import (
 	"github.com/go-chi/chi"
 	"github.com/go-chi/chi/middleware"
 	"github.com/gorilla/websocket"
+	"github.com/lancer-kit/armory/api/httpx"
 	"github.com/lancer-kit/armory/api/render"
 	"github.com/lancer-kit/armory/log"
+	"github.com/lancer-kit/noble"
 	"github.com/lancer-kit/uwe/v2/presets/api"
+	"github.com/pkg/errors"
 	"github.com/rs/cors"
 	"github.com/sirupsen/logrus"
 	"gitlab.inn4science.com/ctp/hermes/config"
 	"gitlab.inn4science.com/ctp/hermes/info"
+	"gitlab.inn4science.com/ctp/hermes/models"
 	"gitlab.inn4science.com/ctp/hermes/service/socket"
-	"gitlab.inn4science.com/ctp/hermes/sessions"
 )
 
-func GetServer(logger *logrus.Entry, cfg config.Cfg, ctx context.Context, bus socket.EventStream) *api.Server {
-	return api.NewServer(cfg.API, getRouter(ctx, logger, cfg, bus))
+func GetServer(logger *logrus.Entry, cfg config.Cfg, ctx context.Context, hubCom socket.HubCommunicator) *api.Server {
+	return api.NewServer(cfg.API, getRouter(ctx, logger, cfg, hubCom))
 }
 
-func getRouter(ctx context.Context, logger *logrus.Entry, cfg config.Cfg, bus socket.EventStream) http.Handler {
+func getRouter(ctx context.Context, logger *logrus.Entry, cfg config.Cfg, hubCom socket.HubCommunicator) http.Handler {
 	r := chi.NewRouter()
 
 	// A good base middleware stack
@@ -47,18 +49,13 @@ func getRouter(ctx context.Context, logger *logrus.Entry, cfg config.Cfg, bus so
 		r.Use(corsHandler.Handler)
 	}
 
-	storage, err := sessions.NewStorage(cfg.Redis)
-	if err != nil {
-		logger.WithError(err).Fatal("unable to init redis")
-	}
-
 	h := handler{
-		ctx:     ctx,
-		log:     logger,
-		bus:     bus,
-		storage: storage,
-
-		disableSessionCheck: cfg.Redis.DevMode,
+		ctx:         ctx,
+		log:         logger,
+		hubCom:      hubCom,
+		enableAuth:  cfg.EnableAuth,
+		authCfg:     cfg.AuthProviders,
+		serviceKeys: cfg.AuthorizedServices,
 	}
 
 	r.Route("/_ws", func(r chi.Router) {
@@ -68,6 +65,7 @@ func getRouter(ctx context.Context, logger *logrus.Entry, cfg config.Cfg, bus so
 
 		r.Get("/subscribe", h.handleNewWS)
 		r.Get("/gc", func(http.ResponseWriter, *http.Request) { runtime.GC() })
+		r.Get("/sessions/authorized", h.handleActiveSession)
 
 		// r.Get("/metrics", func(writer http.ResponseWriter, _ *http.Request) {
 		// 	data, _ := socket.MetricsCollector.MarshalJSON()
@@ -80,48 +78,38 @@ func getRouter(ctx context.Context, logger *logrus.Entry, cfg config.Cfg, bus so
 }
 
 type handler struct {
-	disableSessionCheck bool
-	storage             *sessions.Storage
-	ctx                 context.Context
-	log                 *logrus.Entry
-	bus                 socket.EventStream
+	ctx    context.Context
+	log    *logrus.Entry
+	hubCom socket.HubCommunicator
+
+	enableAuth  bool
+	authCfg     map[string]config.AuthProvider
+	serviceKeys map[string]noble.Secret
 }
 
-const (
-	HeaderUUID  = "uuid"
-	HeaderToken = "token"
-)
+func (h handler) handleActiveSession(w http.ResponseWriter, r *http.Request) {
+	service := r.Header.Get(models.APIServiceHeader)
+	securityKey := r.Header.Get(models.APIKeyHeader)
 
-func (h *handler) extractUUID(r *http.Request) (string, error) {
-	sessionToken := r.URL.Query().Get(HeaderToken)
-	if sessionToken == "" {
-		uuid := r.URL.Query().Get(HeaderUUID)
-		return uuid, nil
+	if h.enableAuth {
+		key, ok := h.serviceKeys[service]
+		if !ok || securityKey == "" || securityKey != key.Get() {
+			render.Forbidden(w, "auth data invalid")
+			return
+		}
 	}
 
-	session, err := h.storage.GetSession(sessionToken)
-	if err != nil {
-		h.log.WithError(err).Error("failed to get session")
-		return "", errors.New("failed to get session")
-	}
-
-	return session.UserID, nil
+	sessions := h.hubCom.GetSessions()
+	render.Success(w, sessions)
 }
+
 func (h handler) handleNewWS(w http.ResponseWriter, r *http.Request) {
-	h.log.Debug("Socket open with method:", r.Method)
+	logger := log.IncludeRequest(h.log, r)
 
-	sessionUID := time.Now().UnixNano()
-
-	// MetricsCollector.Add("ws.client")
-	userUID, err := h.extractUUID(r)
-	if err != nil {
-		render.ServerError(w)
-		return
-	}
-
-	if userUID == "" || userUID == "undefined" {
-		render.BadRequest(w, "uuid: must be not empty")
-		return
+	authInfo := models.SessionInfo{
+		ID:        time.Now().UnixNano(),
+		IP:        r.RemoteAddr,
+		UserAgent: r.UserAgent(),
 	}
 
 	upgrader := websocket.Upgrader{
@@ -136,7 +124,40 @@ func (h handler) handleNewWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	client := socket.NewSession(h.ctx, h.log, h.bus, conn, sessionUID, userUID)
-	h.log.WithField("uuid", userUID).Debug("Open new client connection")
-	h.bus <- &socket.Event{Kind: socket.EKNewSession, Session: client}
+	client := socket.NewSession(h.ctx, h.log, h.hubCom.EventBus, conn, authInfo, h.authProvider)
+
+	logger.Debug("Open new client connection")
+	h.hubCom.EventBus <- &socket.Event{Kind: socket.EKNewSession, Session: client}
+}
+
+func (h *handler) authProvider(req models.AuthRequest) (*models.AuthResponse, int, error) {
+	if !h.enableAuth {
+		return &models.AuthResponse{UserID: req.Token, TTL: -1}, http.StatusOK, nil
+	}
+
+	provider, ok := h.authCfg[req.Origin]
+	if !ok {
+		return nil, http.StatusNotAcceptable, errors.New("unknown origin")
+	}
+
+	if !provider.CheckRole(req.Role) {
+		return nil, http.StatusNotAcceptable, errors.New("role not allowed")
+	}
+
+	resp, err := httpx.PostJSON(provider.URL.Str, req, map[string]string{provider.Header: provider.AccessKey.Get()})
+	if err != nil {
+		return nil, http.StatusInternalServerError, errors.Wrap(err, "unable to check authorization")
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, resp.StatusCode, errors.New("forbidden")
+	}
+
+	authInfo := new(models.AuthResponse)
+	err = httpx.ParseJSONResult(resp, authInfo)
+	if resp.StatusCode != http.StatusOK {
+		return nil, http.StatusInternalServerError, errors.Wrap(err, "unable to parse auth response")
+	}
+
+	return authInfo, http.StatusOK, nil
 }

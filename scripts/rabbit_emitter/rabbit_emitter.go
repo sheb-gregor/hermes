@@ -23,8 +23,8 @@ func main() {
 	wg := sync.WaitGroup{}
 	for i, mqSub := range cfg.RabbitMQ.Subs {
 		wg.Add(1)
-		go func(sub config.MqSubscription, i int) {
-			mqSubmitter, err := NewRabbitSubmitter(cfg.RabbitMQ.URL())
+		go func(sub config.Exchange, i int) {
+			mqSubmitter, err := NewRabbitSubmitter(cfg.RabbitMQ.Auth.URL())
 			if err != nil {
 				log.Fatalf("failed to create mq submitter: %s", err)
 				return
@@ -88,7 +88,7 @@ func NewRabbitSubmitter(uri string) (*rabbitEmitter, error) {
 	return mqEmitter, err
 }
 
-func (mqEmitter *rabbitEmitter) exchange(mqSub config.MqSubscription, exchangeType string) {
+func (mqEmitter *rabbitEmitter) exchange(mqSub config.Exchange, exchangeType string) {
 	err := mqEmitter.channel.ExchangeDeclare(
 		mqSub.Exchange, mqSub.ExchangeType,
 		true, false, false, false, nil,
@@ -107,7 +107,7 @@ func (mqEmitter *rabbitEmitter) exchange(mqSub config.MqSubscription, exchangeTy
 	}
 }
 
-func (mqEmitter *rabbitEmitter) publish(sub config.MqSubscription, msg, exchangeType string) error {
+func (mqEmitter *rabbitEmitter) publish(sub config.Exchange, msg, exchangeType string) error {
 	err := mqEmitter.channel.Publish(
 		sub.Exchange,
 		"",
