@@ -4,7 +4,7 @@ RUN apk add --no-cache git
 
 ARG COMMIT="n/a"
 ARG TAG="n/a"
-ARG CONFIG="dev"
+ARG CONFIG="master"
 
 #ENV GOPROXY=direct
 ENV GO111MODULE=on
