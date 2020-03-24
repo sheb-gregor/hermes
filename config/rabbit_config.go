@@ -49,6 +49,15 @@ func (cfg RabbitAuth) GetConsumerTag(queue string) string {
 	return fmt.Sprintf("%s:%s_%s", hostname, queue, cfg.ConsumerTag)
 }
 
+func (cfg RabbitAuth) Validate() error {
+	return validation.ValidateStruct(&cfg,
+		validation.Field(&cfg.Host, validation.Required),
+		validation.Field(&cfg.User, validation.Required, noble.RequiredSecret),
+		validation.Field(&cfg.Password, validation.Required, noble.RequiredSecret),
+		validation.Field(&cfg.ConsumerTag, validation.Required),
+	)
+}
+
 type Exchange struct {
 	Exchange     string `json:"exchange" yaml:"exchange"`
 	ExchangeType string `json:"exchange_type" yaml:"exchange_type"`
