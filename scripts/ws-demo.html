@@ -70,7 +70,7 @@
             table += '<div class="field">';
             table += '<div class="field-name"> <b>' + key + ":</b></div>";
             if (typeof data[key] == 'object') {
-                table += '<div class="field-value">' + JSON.stringify(data[key], null, '  ') + "</div>";
+                table += '<div class="field-value">' + JSON.stringify(data[key], null, '') + "</div>";
             } else {
                 table += '<div class="field-value">' + data[key] + "</div>";
             }

@@ -50,15 +50,15 @@ rabbit_mq:
     exchange: ctp.notifications.direct
     exchange_type: direct
   subs:
-    - exchange: ctp.notifications.prices
+    - exchange: ctp.notifications.market_info
       exchange_type: fanout
-      queue: ctp.hermes.prices
+      queue: ctp.hermes.market_info
     - exchange: ctp.notifications.orders
       exchange_type: fanout
       queue: ctp.hermes.orders
-    - exchange: ctp.notifications.accounts
+    - exchange: ctp.notifications.admin_updates
       exchange_type: fanout
-      queue: ctp.hermes.accounts
-    - exchange: ctp.notifications.deposits
+      queue: ctp.hermes.admin_updates
+    - exchange: ctp.notifications.user_updates
       exchange_type: fanout
-      queue: ctp.hermes.deposits
+      queue: ctp.hermes.user_updates
