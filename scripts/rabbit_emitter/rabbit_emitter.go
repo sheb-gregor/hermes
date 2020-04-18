@@ -1,78 +1,91 @@
 package main
 
 import (
+	"context"
 	"io/ioutil"
 	"log"
-	"sync"
 
-	"github.com/google/uuid"
+	"gitlab.inn4science.com/ctp/hermes/metrics"
+	"gitlab.inn4science.com/ctp/hermes/sessions"
 
 	"github.com/pkg/errors"
 	"github.com/streadway/amqp"
-	"gopkg.in/yaml.v2"
 	"syreclabs.com/go/faker"
 
 	"gitlab.inn4science.com/ctp/hermes/config"
 )
 
-func main() {
-	cfg := getConfig("rabbit_emitter.config.yaml")
-
-	exchangeRate := (len(cfg.RabbitMQ.Subs) * cfg.ConnNumber.ConnPercentage) / 100
-
-	wg := sync.WaitGroup{}
-	for i, mqSub := range cfg.RabbitMQ.Subs {
-		wg.Add(1)
-		go func(sub config.Exchange, i int) {
-			mqSubmitter, err := NewRabbitSubmitter(cfg.RabbitMQ.Auth.URL())
-			if err != nil {
-				log.Fatalf("failed to create mq submitter: %s", err)
-				return
-			}
-
-			if i < exchangeRate {
-				mqSubmitter.exchange(sub, DirectExchange)
-			} else {
-				mqSubmitter.exchange(sub, BroadcastExchange)
-			}
-			wg.Done()
-		}(mqSub, i)
-	}
-	wg.Wait()
-}
-
-func getConfig(path string) RabbitEmitterCfg {
-	var cfg RabbitEmitterCfg
-
-	yamlFile, err := ioutil.ReadFile(path)
-	if err != nil {
-		log.Fatalf("can`t read confg file: %s", err)
-	}
-	err = yaml.Unmarshal(yamlFile, &cfg)
-	if err != nil {
-		log.Fatalf("can`t unmarshal the config file: %s", err)
-	}
-	return cfg
-}
-
 const (
-	BroadcastExchange = "broadcast"
-	DirectExchange    = "direct"
+	broadcastExchange = "broadcast"
+	directExchange    = "direct"
 )
 
 type rabbitEmitter struct {
-	uri     string
+	uri string
+	cfg RabbitEmitterCfg
+
+	metrics        *metrics.SafeMetrics
+	metricsStorage sessions.Storage
+}
+
+func NewRabbitEmitter(uri string, cfg RabbitEmitterCfg) *rabbitEmitter {
+	storage, err := sessions.NewNutsDBStorage(cfg.Metrics, sessions.BucketStats{})
+	if err != nil {
+		log.Fatalf("failed to initialize metrics storage: %s", err)
+	}
+
+	return &rabbitEmitter{
+		uri:            uri,
+		cfg:            cfg,
+		metricsStorage: storage,
+	}
+}
+
+func (e *rabbitEmitter) LoadMetrics(ctx context.Context) {
+	e.metrics = new(metrics.SafeMetrics).New(ctx)
+
+	data, err := e.metricsStorage.GetByKey(RabbitMetricsBucket, []byte(metricsKey))
+	if err != nil {
+		log.Printf("failed to get metrics from storage %s", err)
+		return
+	}
+
+	if data == nil {
+		return
+	}
+
+	err = e.metrics.UnmarshalJSON(data)
+	if err != nil {
+		log.Fatalf("failed to umarshal metrics collector%v", err)
+	}
+}
+
+func (e *rabbitEmitter) SaveMetrics() {
+	data, err := e.metrics.MarshalJSON()
+	if err != nil {
+		log.Fatalf("failed to marshal the metrics: %s", err)
+	}
+	err = ioutil.WriteFile("metrics_report.json", data, 0644)
+	if err != nil {
+		log.Printf("failed to write the metrics: %s", err)
+	}
+
+	err = e.metricsStorage.Save(RabbitMetricsBucket, []byte(metricsKey), data, 0)
+	if err != nil {
+		log.Fatalf("failed to save metrics %v", err)
+	}
+}
+
+type rabbitPublisher struct {
 	conn    *amqp.Connection
 	channel *amqp.Channel
 }
 
-func NewRabbitSubmitter(uri string) (*rabbitEmitter, error) {
-	var (
-		err       error
-		mqEmitter = &rabbitEmitter{
-			uri: uri,
-		}
-	)
+func NewRabbitPublisher(uri string, cfg RabbitEmitterCfg) (*rabbitPublisher, error) {
+	var err error
+
+	mqEmitter := new(rabbitPublisher)
+
 	log.Printf("connecting to amqp %s", uri)
 	mqEmitter.conn, err = amqp.Dial(uri)
 	if err != nil {
@@ -85,38 +98,35 @@ func NewRabbitSubmitter(uri string) (*rabbitEmitter, error) {
 		log.Printf("failed amqp channel conn: %s", err)
 		return nil, errors.Wrap(err, "failed channel connection")
 	}
-	return mqEmitter, err
-}
 
-func (mqEmitter *rabbitEmitter) exchange(mqSub config.Exchange, exchangeType string) {
-	err := mqEmitter.channel.ExchangeDeclare(
-		mqSub.Exchange, mqSub.ExchangeType,
+	err = mqEmitter.channel.ExchangeDeclare(
+		cfg.RabbitMQ.Common.Exchange, cfg.RabbitMQ.Common.ExchangeType,
 		true, false, false, false, nil,
 	)
 	if err != nil {
-		log.Printf("failed to declare exchange %s with err: %s", mqSub.Exchange, err)
-		return
+		log.Printf("failed to declare msg publisher with err: %s", err)
 	}
-	log.Printf("declared the exchange %s with type %s", mqSub.Exchange, mqSub.ExchangeType)
-
-	msg := faker.Lorem().Sentence(4)
-	err = mqEmitter.publish(mqSub, msg, exchangeType)
-	if err != nil {
-		log.Printf("publish error: %s", err)
-		return
-	}
+	log.Printf("declared the publishMessage %s with type %s",
+		cfg.RabbitMQ.Common.Exchange, cfg.RabbitMQ.Common.ExchangeType)
+	return mqEmitter, err
 }
 
-func (mqEmitter *rabbitEmitter) publish(sub config.Exchange, msg, exchangeType string) error {
-	err := mqEmitter.channel.Publish(
-		sub.Exchange,
+func (r *rabbitPublisher) publishMessage(mqSub config.Exchange,
+	exchangeType string, metricsCollector *metrics.SafeMetrics) error {
+	metricsCollector.Add(metrics.MKey("exchangeType." + exchangeType))
+
+	emitterChannelNameMKey := metrics.MKey(exchangeType + "." + mqSub.Exchange)
+	msg := faker.Lorem().Sentence(4)
+	err := r.channel.Publish(
+		mqSub.Exchange,
 		"",
 		false,
 		false,
 		amqp.Publishing{
 			Headers: amqp.Table{
-				"uuid":       uuid.New().String(),
+				"uuid":       "someSpecialAuthToken",
 				"visibility": exchangeType,
+				"event_type": mqSub.Exchange,
 			},
 			ContentType:  "application/json",
 			Body:         []byte(msg),
@@ -127,6 +137,18 @@ func (mqEmitter *rabbitEmitter) publish(sub config.Exchange, msg, exchangeType s
 		return errors.Wrap(err, "failed to publish the message")
 	}
 
-	log.Printf("sended %s msg for %s sub exchange with %s exchange type", msg, sub.Exchange, exchangeType)
+	metricsCollector.Add(emitterChannelNameMKey)
+
+	log.Printf("sended %s msg for %s sub publishMessage with %s publishMessage type", msg, mqSub.Exchange, exchangeType)
 	return nil
+}
+
+func (r *rabbitPublisher) Close() {
+	if err := r.channel.Close(); err != nil {
+		log.Println(err)
+	}
+
+	if err := r.conn.Close(); err != nil {
+		log.Println(err)
+	}
 }

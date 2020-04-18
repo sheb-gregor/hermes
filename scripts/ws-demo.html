@@ -215,14 +215,25 @@
 
     function subscribe() {
         let channel = document.getElementById("channel").value;
-        let event = document.getElementById("event").value;
+      let event = document.getElementById("event").value;
 
 
-        doSend({
-            channel: "ws_status",
-            event: "subscribe",
-            command: {channel, event},
-        });
+      doSend({
+        channel: "ws_status",
+        event: "subscribe",
+        command: {channel, event},
+      });
+    }
+
+    function getCache() {
+      doSend({
+        channel: "ws_status",
+        event: "cache",
+        command: {
+          "ctp.notifications.orders": "",
+          "ctp.notifications.accounts": "",
+        }
+      });
     }
 
 
@@ -247,6 +258,7 @@
         <button onclick="setUrl()"> Set</button>
         <button onclick="cleanUp()"> Clean Events</button>
         <button onclick="autoCleanUp()"> Toggle AutoCLean</button>
+        <button onclick="getCache()">Get cache</button>
       </div>
     </div>
 

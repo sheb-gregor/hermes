@@ -1,13 +1,6 @@
 package info
 
-type Info struct {
-	App     string `json:"app"`
-	Version string `json:"version"`
-	Tag     string `json:"tag"`
-	Build   string `json:"build"`
-}
+import "github.com/lancer-kit/uwe/v2"
 
 // nolint:gochecknoglobals
-var App = Info{
-	App: "hermes",
-}
+var App = uwe.AppInfo{Name: "hermes"}

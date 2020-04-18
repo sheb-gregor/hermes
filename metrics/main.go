@@ -3,6 +3,7 @@ package metrics
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -99,6 +100,26 @@ func (m *SafeMetrics) MarshalJSON() ([]byte, error) {
 	}
 
 	return json.Marshal(res)
+}
+
+func (m *SafeMetrics) UnmarshalJSON(rawData []byte) error {
+	data := map[MKey]uint64{}
+
+	if !m.PrettyPrint {
+		err := json.Unmarshal(rawData, &data)
+		if err != nil {
+			log.Fatalf("failed to unmarshal metrics from storage%v", err)
+		}
+
+		for mKey, mValue := range data {
+			m.Data[mKey] = &counter{
+				mValue,
+			}
+		}
+	}
+
+	// add unmarshalling of prettyPrinted data
+	return nil
 }
 
 func (m *SafeMetrics) parseNodes(data map[MKey]uint64) map[string]node {

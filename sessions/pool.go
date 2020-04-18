@@ -1,7 +1,6 @@
 package sessions
 
 import (
-	"math"
 	"time"
 
 	"github.com/gomodule/redigo/redis"
@@ -10,14 +9,12 @@ import (
 )
 
 func NewPool(conf config.RedisConf) *redis.Pool {
-	nanos := math.Pow10(9)
-
 	return &redis.Pool{
 		Dial:            dial(conf.URL()),
-		TestOnBorrow:    ping(time.Duration(conf.PingInterval * int64(nanos))),
+		TestOnBorrow:    ping(time.Duration(conf.PingInterval) * time.Second),
 		MaxIdle:         conf.MaxIdleConn,
 		MaxActive:       conf.MaxActiveConn,
-		IdleTimeout:     time.Duration(conf.IdleTimeout * int64(nanos)),
+		IdleTimeout:     time.Duration(conf.IdleTimeout) * time.Second,
 		Wait:            false,
 		MaxConnLifetime: 0,
 	}

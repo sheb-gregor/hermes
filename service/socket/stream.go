@@ -22,6 +22,7 @@ const (
 	EKAuthorize
 	EKMessage
 	EKUnregister
+	EKCache
 )
 
 type Event struct {

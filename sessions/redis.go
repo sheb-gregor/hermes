@@ -6,6 +6,7 @@ import (
 	"github.com/gomodule/redigo/redis"
 	"github.com/pkg/errors"
 	"gitlab.inn4science.com/ctp/hermes/config"
+	"gitlab.inn4science.com/ctp/hermes/models"
 )
 
 const (
@@ -19,10 +20,12 @@ const (
 type RedisStorage struct {
 	cfg  config.RedisConf
 	pool *redis.Pool
+
+	stats BucketStats
 }
 
 // NewStorage returns initialized instance of the `Repo`.
-func NewRedisStorage(cfg config.RedisConf) (*RedisStorage, error) {
+func NewRedisStorage(cfg config.RedisConf, stats BucketStats) (*RedisStorage, error) {
 	if cfg.DevMode {
 		return &RedisStorage{cfg: cfg, pool: nil}, nil
 	}
@@ -33,7 +36,11 @@ func NewRedisStorage(cfg config.RedisConf) (*RedisStorage, error) {
 		return nil, errors.Wrap(err, "invalid redis configuration url")
 	}
 
-	return &RedisStorage{cfg: cfg, pool: pool}, nil
+	return &RedisStorage{
+		cfg:   cfg,
+		pool:  pool,
+		stats: stats,
+	}, nil
 }
 
 func (s *RedisStorage) CheckConn() error {
@@ -57,11 +64,7 @@ func (s *RedisStorage) CloseConnection() error {
 	return s.pool.Close()
 }
 
-func (s *RedisStorage) GetSession(key string) (*Session, error) {
-	if s.cfg.DevMode {
-		return &Session{UserID: key, Active: true}, nil
-	}
-
+func (s *RedisStorage) GetByKey(bucket string, key []byte) ([]byte, error) {
 	conn := s.pool.Get()
 	defer conn.Close()
 
@@ -73,17 +76,11 @@ func (s *RedisStorage) GetSession(key string) (*Session, error) {
 		return nil, errors.Wrapf(err, "failed to perform %s command, data wasn't retrieved", commandGet)
 	}
 
-	session := new(Session)
-	err = json.Unmarshal(rawSensitive, session)
-	if err != nil {
-		return nil, errors.Wrap(err, "failed to unmarshal raw value into target")
-	}
-
-	return session, nil
+	return rawSensitive, nil
 }
 
-// SaveAsJSON saves any value as json object with provided key
-func (s *RedisStorage) SaveAsJSON(key string, value interface{}, ttl int64) error {
+// Save saves any value as json object with provided key
+func (s *RedisStorage) Save(bucket string, key, value []byte, ttl int64) error {
 	if s.cfg.DevMode {
 		return nil
 	}
@@ -96,10 +93,50 @@ func (s *RedisStorage) SaveAsJSON(key string, value interface{}, ttl int64) erro
 		return errors.Wrap(err, "failed to marshal data")
 	}
 
-	_, err = conn.Do(commandSet, key, sensitiveMarshalled, commandExpire, ttl)
+	_, err = conn.Do(commandSet, s.stats.CurrentLastKey, sensitiveMarshalled, commandExpire, ttl)
 	if err != nil {
 		return errors.Wrapf(err, "failed to perform %s command, data wasn't saved", commandSet)
 	}
+	s.stats.UpdateKey()
 
 	return nil
+}
+
+func (s *RedisStorage) getAllKeys() ([]string, error) {
+	conn := s.pool.Get()
+	defer conn.Close()
+
+	keys, err := redis.Strings(conn.Do("KEYS", "*"))
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to get all data")
+	}
+	return keys, nil
+}
+
+func (s *RedisStorage) GetBroadcast() ([]models.Message, error) {
+	keys, err := s.getAllKeys()
+	if err != nil {
+		return nil, err
+	}
+
+	data := make([]models.Message, 0)
+	for _, key := range keys {
+		rawMsg, err := s.GetByKey("", []byte(key))
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to get data by key")
+		}
+
+		var msg models.Message
+		err = json.Unmarshal(rawMsg, &models.Message{})
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to unmarshal data")
+		}
+
+		data = append(data, msg)
+	}
+	return data, nil
+}
+
+func (s *RedisStorage) GetDirect(bucket string) ([]models.Message, error) {
+	return nil, nil
 }

@@ -13,23 +13,20 @@ import (
 )
 
 const (
-	ServiceName       = "hermes"
-	RedisStorageType  = "redis"
-	BoltDBStorageType = "boltdb"
+	ServiceName = "hermes"
 )
 
 // Cfg main structure of the app configuration.
 type Cfg struct {
-	Log              LogConfig    `json:"log" yaml:"log"`
-	API              api.Config   `json:"api" yaml:"api"`
-	RabbitMQ         RabbitMQ     `json:"rabbit_mq" yaml:"rabbit_mq"`
-	Redis            RedisConf    `json:"redis" yaml:"redis"`
-	BoltDB           BoltDBConfig `json:"bolt_db" yaml:"bolt_db"`
-	CacheStorageType string       `json:"cache_storage_type" yaml:"cache_storage_type"`
+	Log      LogConfig  `json:"log" yaml:"log"`
+	API      api.Config `json:"api" yaml:"api"`
+	RabbitMQ RabbitMQ   `json:"rabbit_mq" yaml:"rabbit_mq"`
 
 	EnableAuth         bool                    `json:"enable_auth" yaml:"enable_auth"`
 	AuthorizedServices map[string]noble.Secret `json:"authorized_services" yaml:"authorized_services"`
 	AuthProviders      map[string]AuthProvider `json:"auth_providers" yaml:"auth_providers"`
+
+	Cache CacheCfg `json:"cache" yaml:"cache"`
 }
 
 func (cfg Cfg) Validate() error {
@@ -62,10 +59,7 @@ func (cfg Cfg) Validate() error {
 		validation.Field(&cfg.API, validation.Required),
 		validation.Field(&cfg.Log, validation.Required),
 		validation.Field(&cfg.RabbitMQ, validation.Required),
-		validation.Field(&cfg.Redis, validation.Required),
-		// validation.Field(&cfg.BoltDB, validation.Required),
-		// validation.Field(&cfg.CacheStorageType, validation.Required,
-		// 	validation.In(RedisStorageType, BoltDBStorageType)),
+		validation.Field(&cfg.Cache, validation.Required),
 	)
 }
 

@@ -1,31 +1,60 @@
 package sessions
 
 import (
-	"log"
+	"fmt"
+	"time"
 
+	"github.com/pkg/errors"
 	"gitlab.inn4science.com/ctp/hermes/config"
+	"gitlab.inn4science.com/ctp/hermes/models"
+)
+
+const (
+	BroadcastBucket = "broadcast"
 )
 
 type Storage interface {
 	CheckConn() error
 	CloseConnection() error
-	GetSession(key string) (*Session, error)
-	SaveAsJSON(key string, value interface{}, ttl int64) error
+	GetByKey(bucket string, key []byte) ([]byte, error)
+	Save(bucket string, key, value []byte, ttl int64) error
+
+	GetBroadcast() ([]models.Message, error)
+	GetDirect(bucket string) ([]models.Message, error)
 }
 
-func NewStorage(cfg config.Cfg) Storage {
-	switch cfg.CacheStorageType {
-	case config.BoltDBStorageType:
-		boltdb, err := NewBoltDBStorage(cfg.BoltDB)
+func NewStorage(cfg config.CacheCfg) (Storage, error) {
+	stats := NewBucketStats()
+
+	switch cfg.Type {
+	case config.StorageTypeNutsDB:
+		nutsdb, err := NewNutsDBStorage(cfg.NutsDB, stats)
 		if err != nil {
-			log.Fatalf("boltdb err: %s", err)
+			return nil, errors.Wrap(err, "nutsdb init storage err")
 		}
-		return boltdb
+		return nutsdb, nil
 	default:
-		redis, err := NewRedisStorage(cfg.Redis)
+		redis, err := NewRedisStorage(cfg.Redis, stats)
 		if err != nil {
-			log.Fatalf("redis err: %s", err)
+			return nil, errors.Wrap(err, "redis init storage err")
 		}
-		return redis
+		return redis, nil
 	}
+}
+
+type BucketStats struct {
+	CurrentInitialKey string
+	CurrentLastKey    string
+}
+
+func NewBucketStats() BucketStats {
+	key := fmt.Sprintf("event_%d", time.Now().UTC().UnixNano())
+	return BucketStats{
+		CurrentInitialKey: key,
+		CurrentLastKey:    key,
+	}
+}
+
+func (s *BucketStats) UpdateKey() {
+	s.CurrentLastKey = fmt.Sprintf("event_%d", time.Now().UTC().UnixNano())
 }

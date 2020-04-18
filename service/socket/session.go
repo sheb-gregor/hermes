@@ -37,6 +37,7 @@ const (
 	EvUnsubscribe   = "unsubscribe"
 	EvStatusChannel = "ws_status"
 	EvPong          = "pong"
+	EvCache         = "cache"
 )
 
 const (
@@ -85,7 +86,8 @@ func NewSession(ctx context.Context, log *logrus.Entry, bus EventStream,
 }
 
 func (c *Session) isSubscribed(channel, event string) bool {
-	if channel == EvStatusChannel || c.subscriptionsChannel.getChannel(WildcardSubscription) {
+	if channel == EvCache || channel == EvStatusChannel ||
+		c.subscriptionsChannel.getChannel(WildcardSubscription) {
 		return true
 	}
 
@@ -238,7 +240,7 @@ func (c *Session) writeToStream() {
 				continue
 			}
 			if err := c.writeToClient(message); err != nil {
-				c.log.Info("error when writing to client: ", err)
+				c.log.WithError(err).Debug("error when writing to client")
 				return
 			}
 
@@ -285,26 +287,10 @@ func (c *Session) processIncomingMessage(raw []byte) error {
 		c.bus <- &Event{Kind: EKHandshake, SessionID: c.info.ID}
 
 	case EvAuthorize:
-		resultStatus := "success"
+		c.processAuthEvent(userMsg)
 
-		if c.info.UserID != "" {
-			c.send <- &models.Message{Channel: EvStatusChannel, Event: EvAuthorize,
-				Data: map[string]interface{}{EvAuthorize: resultStatus, "resultCode": http.StatusOK},
-			}
-			return nil
-		}
-
-		code, err := c.verifyAuth(userMsg.Command)
-		if err != nil {
-			resultStatus = "failed"
-			c.log.WithError(err).Error("failed to verifyAuth")
-		} else {
-			c.bus <- &Event{Kind: EKAuthorize, SessionID: c.info.ID, SessionInfo: &c.info}
-		}
-
-		c.send <- &models.Message{Channel: EvStatusChannel, Event: EvAuthorize,
-			Data: map[string]interface{}{EvAuthorize: resultStatus, "resultCode": code},
-		}
+	case EvCache:
+		c.bus <- &Event{Kind: EKCache, SessionID: c.info.ID, Message: userMsg}
 
 	case EvSubscribe:
 		// MetricsCollector.Add(metrics.MKey("sessionStorage." + c.userUID + ".EvSubscribe"))
@@ -324,6 +310,29 @@ func (c *Session) processIncomingMessage(raw []byte) error {
 	}
 
 	return nil
+}
+
+func (c *Session) processAuthEvent(userMsg *models.Message) {
+	resultStatus := "success"
+
+	if c.info.UserID != "" {
+		c.send <- &models.Message{Channel: EvStatusChannel, Event: EvAuthorize,
+			Data: map[string]interface{}{EvAuthorize: resultStatus, "resultCode": http.StatusOK},
+		}
+		return
+	}
+
+	code, err := c.verifyAuth(userMsg.Command)
+	if err != nil {
+		resultStatus = "failed"
+		c.log.WithError(err).Error("failed to verifyAuth")
+	} else {
+		c.bus <- &Event{Kind: EKAuthorize, SessionID: c.info.ID, SessionInfo: &c.info}
+	}
+
+	c.send <- &models.Message{Channel: EvStatusChannel, Event: EvAuthorize,
+		Data: map[string]interface{}{EvAuthorize: resultStatus, "resultCode": code},
+	}
 }
 
 func (c *Session) verifyAuth(command map[string]string) (int, error) {
