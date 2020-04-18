@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"sync"
 
 	"github.com/lancer-kit/uwe/v2"
@@ -181,7 +180,7 @@ func (worker *RabbitConsumer) Run(wCtx uwe.Context) error {
 
 					Channel: message.Exchange,
 					Event:   params.Event,
-					Data:    map[string]interface{}{params.Event: json.RawMessage(message.Body)},
+					Data:    map[string]interface{}{params.Event: string(message.Body)},
 				},
 			}
 

@@ -24,6 +24,7 @@ require (
 	github.com/streadway/amqp v0.0.0-20200108173154-1c71cc93ed71
 	github.com/tidwall/gjson v1.6.0 // indirect
 	github.com/urfave/cli v1.22.3
+	github.com/xujiajun/nutsdb v0.5.0
 	golang.org/x/crypto v0.0.0-20200320181102-891825fb96df // indirect
 	golang.org/x/sys v0.0.0-20200321134203-328b4cd54aae // indirect
 	gopkg.in/yaml.v2 v2.2.8

@@ -2,13 +2,17 @@ package socket
 
 import (
 	"context"
+	"encoding/json"
 	"runtime"
 	"sync"
 	"time"
 
 	"github.com/lancer-kit/uwe/v2"
+	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+	"gitlab.inn4science.com/ctp/hermes/config"
 	"gitlab.inn4science.com/ctp/hermes/models"
+	"gitlab.inn4science.com/ctp/hermes/sessions"
 )
 
 // var MetricsCollector *metrics.SafeMetrics
@@ -20,6 +24,7 @@ type Hub struct {
 	cancel context.CancelFunc
 
 	// subscriptionsAdder chan<- models.ManageQueue
+	cacheStorage sessions.Storage
 
 	eventStream     EventStream
 	sessionStorage  wsSessionStorage
@@ -27,13 +32,18 @@ type Hub struct {
 	liveConnections wsLiveSessions
 }
 
-func NewHub(logger *logrus.Entry) *Hub {
+func NewHub(logger *logrus.Entry, cfg config.CacheCfg) *Hub {
 	ctx, cancel := context.WithCancel(context.Background())
+	cacheStorage, err := sessions.NewStorage(cfg)
+	if err != nil {
+		logrus.Fatalf("failed to initialize cache storage: %s", err)
+	}
 
 	return &Hub{
-		log:    logger.WithField("sub_service", "ws-hub"),
-		ctx:    ctx,
-		cancel: cancel,
+		log:          logger.WithField("sub_service", "ws-hub"),
+		ctx:          ctx,
+		cancel:       cancel,
+		cacheStorage: cacheStorage,
 
 		sessionStorage:  wsSessionStorage{Map: new(sync.Map)},
 		liveConnections: wsLiveSessions{Map: new(sync.Map)},
@@ -132,6 +142,10 @@ func (h *Hub) Run(wCtx uwe.Context) error {
 
 			case EKHandshake:
 				// MetricsCollector.Add("hub.HandshakesChan")
+				h.processHandshake(event.SessionID)
+
+			case EKAuthorize:
+				h.authorizeSession(*event.SessionInfo)
 				client, err := h.sessionStorage.getByID(event.SessionID)
 				if err != nil {
 					h.log.WithError(err).Warn("unable to get client by SessionID")
@@ -139,19 +153,22 @@ func (h *Hub) Run(wCtx uwe.Context) error {
 					continue
 				}
 
-				client.send <- &models.Message{Event: EvHandshake, Channel: EvStatusChannel}
-				h.log.Debug("Response sent to ", client.info.ID)
-
-			case EKAuthorize:
-				h.authorizeSession(*event.SessionInfo)
+				//send all direct event to client if the authorization was successful
+				err = h.sendDirectCache(client.send, event.SessionInfo.UserID)
+				if err != nil {
+					h.log.WithError(err).Warn("unable to get direct client cache")
+					continue
+				}
 
 			case EKMessage:
-				// MetricsCollector.Add("hub.MessagesChan")
-				if event.Message.Meta.Broadcast {
-					h.broadCastAll(event.Message)
-				} else {
-					h.sendDirect(event.Message)
+				err := h.processMessage(event)
+				if err != nil {
+					h.log.WithError(err).Debug("failed to process message")
+					continue
 				}
+
+			case EKCache:
+				h.processCache(event)
 
 			case EKUnregister:
 				// MetricsCollector.Add("hub.UnregisterChan")
@@ -241,4 +258,97 @@ func (h Hub) sendDirect(message *models.Message) {
 
 		session.send <- message
 	}
+}
+
+func (h Hub) processMessage(event *Event) error {
+	// MetricsCollector.Add("hub.MessagesChan")
+	msg, err := json.Marshal(event.Message)
+	if err != nil {
+		return errors.Wrap(err, "failed to marshal message data")
+	}
+	if event.Message.Meta.Broadcast {
+		h.broadCastAll(event.Message)
+		err := h.cacheStorage.Save(sessions.BroadcastBucket, nil, msg, event.Message.Meta.TTL)
+		if err != nil {
+			return errors.Wrap(err, "failed to cache the broadcast msg")
+		}
+	} else {
+		h.sendDirect(event.Message)
+		err := h.cacheStorage.Save(event.Message.Meta.UserUID, nil, msg, event.Message.Meta.TTL)
+		if err != nil {
+			return errors.Wrap(err, "failed to cache the direct msg")
+		}
+	}
+
+	return nil
+}
+
+func (h Hub) processHandshake(sessionID int64) {
+	client, err := h.sessionStorage.getByID(sessionID)
+	if err != nil {
+		h.log.WithError(err).Warn("unable to get client by SessionID")
+		h.rmSession(sessionID)
+		return
+	}
+	client.send <- &models.Message{Event: EvHandshake, Channel: EvStatusChannel}
+	h.log.WithField("client", client.info.ID).Debug("Response sent to")
+}
+
+func (h Hub) processCache(event *Event) {
+	client, err := h.sessionStorage.getByID(event.SessionID)
+	if err != nil {
+		h.log.WithError(err).Warn("unable to get client by SessionID")
+		h.rmSession(event.SessionID)
+	}
+
+	// send all broadcast events to the client if handshake is successful
+	err = h.sendBroadcastCache(client.send, event.Message)
+	if err != nil {
+		h.log.WithError(err).Warn("unable to get broadcast client cache")
+	}
+}
+
+func (h Hub) sendBroadcastCache(clientC chan *models.Message, msg *models.Message) error {
+	broadcastEvents, err := h.cacheStorage.GetBroadcast()
+	if len(broadcastEvents) == 0 {
+		h.log.Info("broadcast client cache is empty")
+		return nil
+	}
+	if err != nil {
+		return errors.Wrap(err, "get all from broadcast bucket err")
+	}
+
+	// match filter channels and broadcast event channels
+	for _, v := range broadcastEvents {
+		for j := range msg.Command {
+			if v.Channel != j {
+				continue
+			}
+
+			clientC <- &models.Message{
+				Channel: v.Channel,
+				Event:   v.Event,
+				Command: v.Command,
+				Data:    v.Data,
+			}
+		}
+	}
+	return nil
+}
+
+func (h Hub) sendDirectCache(clientC chan *models.Message, userUID string) error {
+	directEvents, err := h.cacheStorage.GetDirect(userUID)
+	if err != nil {
+		return errors.Wrap(err, "get all from direct bucket err")
+	}
+
+	for _, m := range directEvents {
+		clientC <- &models.Message{
+			Channel: m.Channel,
+			Event:   m.Event,
+			Command: m.Command,
+			Data:    m.Data,
+		}
+	}
+	return nil
 }
