@@ -10,6 +10,7 @@ import (
 	"github.com/streadway/amqp"
 	"gitlab.inn4science.com/ctp/hermes/app/ws"
 	"gitlab.inn4science.com/ctp/hermes/config"
+	"gitlab.inn4science.com/ctp/hermes/metrics"
 	"gitlab.inn4science.com/ctp/hermes/models"
 )
 
@@ -183,6 +184,8 @@ func (worker *RabbitConsumer) Run(wCtx uwe.Context) error {
 					Data:    map[string]interface{}{params.Event: string(message.Body)},
 				},
 			}
+
+			metrics.Inc(config.IncomingRabbitMessages)
 
 		case <-wCtx.Done():
 			cancel()

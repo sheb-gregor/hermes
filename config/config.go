@@ -9,6 +9,7 @@ import (
 	"github.com/lancer-kit/uwe/v2/presets/api"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+	"gitlab.inn4science.com/ctp/hermes/metrics"
 	"gopkg.in/yaml.v2"
 )
 
@@ -28,6 +29,8 @@ type Cfg struct {
 	AuthorizedServices map[string]noble.Secret `json:"authorized_services" yaml:"authorized_services"`
 	AuthProviders      map[string]AuthProvider `json:"auth_providers" yaml:"auth_providers"`
 	Cache              CacheCfg                `json:"cache" yaml:"cache"`
+
+	Monitoring metrics.MonitoringConf `json:"monitoring" yaml:"monitoring"`
 }
 
 func (cfg Cfg) Validate() error {
@@ -61,6 +64,7 @@ func (cfg Cfg) Validate() error {
 		validation.Field(&cfg.Log, validation.Required),
 		validation.Field(&cfg.RabbitMQ, validation.Required),
 		validation.Field(&cfg.Cache, validation.Required),
+		validation.Field(&cfg.Monitoring, validation.Required),
 	)
 }
 
@@ -103,6 +107,14 @@ func ReadConfig(path string) Cfg {
 	for origin, provider := range config.AuthProviders {
 		provider.Init()
 		config.AuthProviders[origin] = provider
+	}
+
+	if config.Monitoring.Metrics {
+		metrics.Init(metrics.CollectorOpts{
+			Name: config.Monitoring.Host,
+			Host: config.Monitoring.Host,
+		})
+		registerAllKeys()
 	}
 
 	return *config

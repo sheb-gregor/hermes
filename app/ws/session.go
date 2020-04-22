@@ -11,6 +11,8 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+	"gitlab.inn4science.com/ctp/hermes/config"
+	"gitlab.inn4science.com/ctp/hermes/metrics"
 	"gitlab.inn4science.com/ctp/hermes/models"
 )
 
@@ -51,10 +53,11 @@ type AuthProviderF func(models.AuthRequest) (*models.AuthResponse, int, error)
 type Session struct {
 	conn *websocket.Conn
 
-	bus    EventStream
 	ctx    context.Context
 	cancel context.CancelFunc
+	wg     sync.WaitGroup
 
+	bus  EventStream
 	info models.SessionInfo
 
 	// Buffered channel of outbound MessagesChan.
@@ -66,10 +69,10 @@ type Session struct {
 	authProvider AuthProviderF
 }
 
-func NewSession(ctx context.Context, log *logrus.Entry, bus EventStream,
+func NewSession(pCtx context.Context, log *logrus.Entry, bus EventStream,
 	conn *websocket.Conn, info models.SessionInfo, authProvider AuthProviderF) *Session {
 
-	ctx, cancel := context.WithCancel(ctx)
+	ctx, cancel := context.WithCancel(pCtx)
 
 	return &Session{
 		ctx:                  ctx,
@@ -83,6 +86,19 @@ func NewSession(ctx context.Context, log *logrus.Entry, bus EventStream,
 		subscriptionsChannel: activeChannel{new(sync.Map)},
 		subscriptionsEvent:   activeEvent{new(sync.Map)},
 	}
+}
+
+func (c *Session) Close() error {
+	c.cancel()
+	c.wg.Wait()
+
+	err := c.conn.Close()
+	if err != nil {
+		return err
+	}
+
+	close(c.send)
+	return nil
 }
 
 func (c *Session) isSubscribed(channel, event string) bool {
@@ -110,7 +126,6 @@ func (c *Session) isSubscribed(channel, event string) bool {
 }
 
 func (c *Session) addSubscription(channel, event string) {
-	// MetricsCollector.Add(metrics.MKey("sessionStorage." + c.userUID + ".addSubscription"))
 	if channel == "" {
 		return
 	}
@@ -150,8 +165,9 @@ func (c *Session) readStream() {
 	defer func() {
 		c.log.Info("connection closed")
 		c.bus <- &Event{Kind: EKUnregister, SessionID: c.info.ID}
+		c.wg.Done()
 	}()
-
+	c.wg.Add(1)
 	c.conn.SetReadLimit(maxMessageSize)
 	c.conn.SetPongHandler(func(string) error { return c.conn.SetReadDeadline(time.Now().Add(pongWait)) })
 
@@ -186,10 +202,12 @@ func (c *Session) readStream() {
 }
 
 func (c *Session) readMessages(ctx context.Context, im chan wsMessage) {
+	c.wg.Add(1)
 	for {
 		select {
 		case <-ctx.Done():
 			close(im)
+			c.wg.Done()
 			return
 		default:
 			msgCode, message, err := c.conn.ReadMessage()
@@ -202,7 +220,6 @@ func (c *Session) readMessages(ctx context.Context, im chan wsMessage) {
 				return
 			}
 
-			// MetricsCollector.Add(metrics.MKey("sessionStorage." + c.userUID + ".readMessage"))
 			if message == nil {
 				c.log.Debug("nil message from read channel")
 				continue
@@ -225,7 +242,9 @@ func (c *Session) writeToStream() {
 		c.log.Debug("close connection")
 
 		c.bus <- &Event{Kind: EKUnregister, SessionID: c.info.ID}
+		c.wg.Done()
 	}()
+	c.wg.Add(1)
 
 	for {
 		select {
@@ -244,6 +263,7 @@ func (c *Session) writeToStream() {
 			}
 
 			if !c.isSubscribed(message.Channel, message.Event) {
+				metrics.Inc(config.DroppedMessages)
 				continue
 			}
 			if err := c.writeToClient(message); err != nil {
@@ -251,6 +271,7 @@ func (c *Session) writeToStream() {
 				return
 			}
 
+			metrics.Inc(config.DeliveredMessages)
 			c.log.WithField("event", message.Event).Trace("write message to connection")
 
 		case <-ticker.C:
@@ -289,8 +310,6 @@ func (c *Session) processIncomingMessage(raw []byte) error {
 
 	switch userMsg.Event {
 	case EvHandshake:
-		// MetricsCollector.Add(metrics.MKey("sessionStorage." + c.userUID + ".EvHandshake"))
-
 		c.bus <- &Event{Kind: EKHandshake, SessionID: c.info.ID}
 
 	case EvAuthorize:
@@ -300,15 +319,11 @@ func (c *Session) processIncomingMessage(raw []byte) error {
 		c.bus <- &Event{Kind: EKCache, SessionID: c.info.ID, Message: userMsg}
 
 	case EvSubscribe:
-		// MetricsCollector.Add(metrics.MKey("sessionStorage." + c.userUID + ".EvSubscribe"))
-
 		channel := userMsg.Command["channel"]
 		event := userMsg.Command["event"]
 		c.addSubscription(channel, event)
 
 	case EvUnsubscribe:
-		// MetricsCollector.Add(metrics.MKey("sessionStorage." + c.userUID + ".EvUnsubscribe"))
-
 		channel := userMsg.Command["channel"]
 		c.rmSubscription(channel)
 
@@ -365,8 +380,6 @@ func (c *Session) verifyAuth(command map[string]string) (int, error) {
 }
 
 func (c *Session) writeToClient(message *models.Message) error {
-	// MetricsCollector.Add(metrics.MKey("sessionStorage." + c.userUID + ".writeToClient"))
-
 	var msg interface{} = message
 	if message.Channel != EvStatusChannel {
 		msg = message.ToShort()

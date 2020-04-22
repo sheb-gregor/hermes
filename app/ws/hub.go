@@ -12,6 +12,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"gitlab.inn4science.com/ctp/hermes/cache"
 	"gitlab.inn4science.com/ctp/hermes/config"
+	"gitlab.inn4science.com/ctp/hermes/metrics"
 	"gitlab.inn4science.com/ctp/hermes/models"
 )
 
@@ -73,8 +74,6 @@ func (h *Hub) Context() context.Context {
 }
 
 func (h *Hub) addSession(client *Session) {
-	// MetricsCollector.Add("hub.add_client")
-
 	h.sessionStorage.Store(client.info.ID, client)
 	h.liveConnections.Store(client.info.ID, true)
 
@@ -82,19 +81,18 @@ func (h *Hub) addSession(client *Session) {
 	// new goroutines.
 	go client.writeToStream()
 	go client.readStream()
+	metrics.Inc(config.WSActiveSessions)
 }
 
 func (h *Hub) authorizeSession(session models.SessionInfo) {
 	h.usersSessions.addSessionID(session.UserID, session)
-
-	// MetricsCollector.Add("hub.add_client")
+	metrics.Inc(config.WSAuthorizedSessions)
 }
 
 func (h *Hub) rmSession(sessionID int64) {
 	client, err := h.sessionStorage.getByID(sessionID)
 	if err != nil {
-		h.log.WithError(err).
-			WithField("connUID", sessionID).
+		h.log.WithError(err).WithField("connUID", sessionID).
 			Warn("unable to get client by connUID")
 		return
 	}
@@ -103,14 +101,15 @@ func (h *Hub) rmSession(sessionID int64) {
 	h.liveConnections.Delete(sessionID)
 	h.usersSessions.rmSessionID(client.info.UserID, sessionID)
 
-	close(client.send)
-
-	// MetricsCollector.Add("hub.rm_client")
-	if err = client.conn.Close(); err != nil {
+	if err = client.Close(); err != nil {
 		h.log.WithError(err).
 			WithField("connUID", sessionID).
-			Error("failed to remove client")
+			Error("failed to close client session")
 	}
+
+	metrics.Inc(config.WSClosedSessions)
+	metrics.Dec(config.WSActiveSessions)
+	metrics.Dec(config.WSAuthorizedSessions)
 }
 
 func (h Hub) GetSessionsCount() int64 {
@@ -138,7 +137,6 @@ func (h *Hub) Run(wCtx uwe.Context) error {
 				h.addSession(event.Session)
 
 			case EKHandshake:
-				// MetricsCollector.Add("hub.HandshakesChan")
 				h.processHandshake(event.SessionID)
 
 			case EKAuthorize:
@@ -155,7 +153,6 @@ func (h *Hub) Run(wCtx uwe.Context) error {
 				h.processCache(event)
 
 			case EKUnregister:
-				// MetricsCollector.Add("hub.UnregisterChan")
 				h.rmSession(event.SessionID)
 			}
 
@@ -208,6 +205,7 @@ func (h *Hub) getSessionListByUser() map[string]map[int64]models.SessionInfo {
 }
 
 func (h *Hub) broadCastAll(message *models.Message) {
+	metrics.Inc(config.SentBroadcastMessages)
 	h.sessionStorage.Range(func(key interface{}, value interface{}) bool {
 		session, ok := value.(*Session)
 		if !ok {
@@ -225,6 +223,7 @@ func (h *Hub) broadCastAll(message *models.Message) {
 }
 
 func (h *Hub) sendDirect(message *models.Message) {
+	metrics.Inc(config.SentDirectMessages)
 	for sessionID := range h.usersSessions.getSessions(message.Meta.UserUID) {
 		session, err := h.sessionStorage.getByID(sessionID)
 		if err != nil {
@@ -245,7 +244,6 @@ func (h *Hub) sendDirect(message *models.Message) {
 }
 
 func (h *Hub) processMessage(event *Event) error {
-	// MetricsCollector.Add("hub.MessagesChan")
 	msg, err := json.Marshal(event.Message)
 	if err != nil {
 		return errors.Wrap(err, "failed to marshal message data")

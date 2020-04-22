@@ -83,7 +83,8 @@ func (r *rabbitPublisher) publishMessage(mqSub config.Exchange,
 	metricsCollector.Add(metrics.MKey("exchangeType." + exchangeType))
 
 	emitterChannelNameMKey := metrics.MKey(exchangeType + "." + mqSub.Exchange)
-	msg := faker.Lorem().Sentence(4)
+	msg := `{"t":"` + faker.Lorem().Sentence(4) + `"}`
+
 	err := r.channel.Publish(
 		mqSub.Exchange,
 		"",

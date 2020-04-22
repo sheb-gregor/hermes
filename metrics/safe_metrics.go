@@ -9,17 +9,6 @@ import (
 	"sync/atomic"
 )
 
-type counter struct {
-	val uint64
-}
-
-func (c *counter) Increment() {
-	atomic.AddUint64(&c.val, 1)
-}
-func (c *counter) Val() uint64 {
-	return atomic.LoadUint64(&c.val)
-}
-
 const Separator = "."
 
 type MKey string
@@ -30,6 +19,17 @@ func NewMKey(parts ...string) MKey {
 
 func (key MKey) Split() []string {
 	return strings.Split(string(key), Separator)
+}
+
+type counter struct {
+	val uint64
+}
+
+func (c *counter) Increment() {
+	atomic.AddUint64(&c.val, 1)
+}
+func (c *counter) Val() uint64 {
+	return atomic.LoadUint64(&c.val)
 }
 
 type SafeMetrics struct {
@@ -58,6 +58,7 @@ func (m *SafeMetrics) Add(name MKey) {
 
 	m.bus <- name
 }
+
 func (m *SafeMetrics) Value(name MKey) uint64 {
 	return m.Data[name].Val()
 }

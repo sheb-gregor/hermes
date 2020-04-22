@@ -18,6 +18,7 @@ require (
 	github.com/lib/pq v1.3.0 // indirect
 	github.com/onrik/logrus v0.5.1 // indirect
 	github.com/pkg/errors v0.9.1
+	github.com/prometheus/client_golang v1.5.1
 	github.com/rubenv/sql-migrate v0.0.0-20200212082348-64f95ea68aa3 // indirect
 	github.com/sirupsen/logrus v1.4.2
 	github.com/streadway/amqp v0.0.0-20200108173154-1c71cc93ed71
