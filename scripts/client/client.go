@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
@@ -12,17 +11,15 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
-	"github.com/lancer-kit/uwe/v2/presets/api"
 	"github.com/pkg/errors"
 	"gitlab.inn4science.com/ctp/hermes/config"
 	"gitlab.inn4science.com/ctp/hermes/metrics"
 	"gitlab.inn4science.com/ctp/hermes/models"
-	"gitlab.inn4science.com/ctp/hermes/sessions"
 )
 
 const (
 	channelBufSize   = 1000
-	connectPeriod    = 1 * time.Second
+	connectPeriod    = 10 * time.Millisecond
 	authPeriod       = connectPeriod * 5
 	disconnectPeriod = connectPeriod * 3
 
@@ -33,8 +30,6 @@ const (
 	evCache     = "cache"
 	evPing      = "ping"
 	evPong      = "pong"
-
-	metricsKey = "metrics"
 )
 
 type WsConnector struct {
@@ -42,23 +37,17 @@ type WsConnector struct {
 	cfg              ClientCfg
 	ctx              context.Context
 
-	metrics        *metrics.SafeMetrics
-	metricsStorage sessions.Storage
+	metrics *metrics.SafeMetrics
 }
 
 func NewWsConnector(cfg ClientCfg, ctx context.Context) *WsConnector {
 	clients := make(map[string]*WsClient)
 
-	storage, err := sessions.NewNutsDBStorage(cfg.Metrics, sessions.BucketStats{})
-	if err != nil {
-		log.Fatalf("failed to initialize metrics storage: %s", err)
-	}
-
 	return &WsConnector{
 		wsClientsStorage: clients,
 		cfg:              cfg,
 		ctx:              ctx,
-		metricsStorage:   storage,
+		metrics:          new(metrics.SafeMetrics).New(ctx),
 	}
 }
 
@@ -67,23 +56,17 @@ func (c *WsConnector) RunWsScheduler() {
 	connect := time.NewTicker(connectPeriod)
 	auth := time.NewTicker(authPeriod)
 	disconnect := time.NewTicker(disconnectPeriod)
-	defer func() {
-		connect.Stop()
-		auth.Stop()
-		disconnect.Stop()
-	}()
 
 	rand.Seed(time.Now().UnixNano())
-
 	ctx, cancel := context.WithDeadline(c.ctx, time.Now().Add(time.Minute*5))
 
 	// cacheFilter consists of
 	// - channel name (name/*** - wildcard)
 	// - event (optional)
-	cacheFilter := map[string]string{
-		"ctp.notifications.prices": "",
-		"ctp.hermes.deposits":      "",
-	}
+	// cacheFilter := map[string]string{
+	// 	"ctp.notifications.prices": "",
+	// 	"ctp.hermes.deposits":      "",
+	// }
 	for {
 		select {
 		case <-ctx.Done():
@@ -91,6 +74,10 @@ func (c *WsConnector) RunWsScheduler() {
 				client.closeWsConnection()
 			}
 			cancel()
+
+			connect.Stop()
+			auth.Stop()
+			disconnect.Stop()
 			return
 
 		case <-connect.C:
@@ -102,13 +89,13 @@ func (c *WsConnector) RunWsScheduler() {
 			client.handshake()
 			for _, ch := range c.cfg.RabbitMQ.Subs {
 				client.subscribeToChannel(ch)
-				client.getCache(cacheFilter)
+				// client.getCache(cacheFilter)
 			}
 
 		case <-auth.C:
 			client := c.addWsClient(ctx)
 			client.auth(c.cfg.Auth)
-			client.getCache(cacheFilter)
+			// client.getCache(cacheFilter)
 
 		case <-disconnect.C:
 			c.metrics.Add("disconnected")
@@ -129,38 +116,14 @@ func (c *WsConnector) RunWsScheduler() {
 	}
 }
 
-func (c *WsConnector) LoadMetrics() {
-	c.metrics = new(metrics.SafeMetrics).New(c.ctx)
-
-	data, err := c.metricsStorage.GetByKey(ClientMetricsBucket, []byte(metricsKey))
-	if err != nil {
-		log.Printf("failed to get metrics from storage %s", err)
-		return
-	}
-
-	if data == nil {
-		return
-	}
-
-	err = c.metrics.UnmarshalJSON(data)
-	if err != nil {
-		log.Fatalf("failed to umarshal metrics collector%v", err)
-	}
-}
-
 func (c *WsConnector) SaveMetrics() {
 	data, err := c.metrics.MarshalJSON()
 	if err != nil {
 		log.Fatalf("failed to marshal the metrics: %s", err)
 	}
-	err = ioutil.WriteFile("metrics_report.json", data, 0644)
+	err = ioutil.WriteFile("client_metrics_report.json", data, 0644)
 	if err != nil {
 		log.Printf("failed to write the metrics: %s", err)
-	}
-
-	err = c.metricsStorage.Save(ClientMetricsBucket, []byte(metricsKey), data, 0)
-	if err != nil {
-		log.Fatalf("failed to save metrics %v", err)
 	}
 }
 
@@ -188,10 +151,9 @@ type Message struct {
 	Command map[string]string `json:"command"`
 }
 
-func NewWsClient(cfg api.Config, ctx context.Context) *WsClient {
-	url := fmt.Sprintf("ws://%s:%d/_ws/subscribe", cfg.Host, cfg.Port)
+func NewWsClient(hermesURL string, ctx context.Context) *WsClient {
 	id := uuid.New().String()
-	conn, err := dial(url)
+	conn, err := dial(hermesURL)
 	if err != nil {
 		log.Fatalf("dial %s", err)
 	}
@@ -205,10 +167,10 @@ func NewWsClient(cfg api.Config, ctx context.Context) *WsClient {
 }
 
 func (c *WsConnector) addWsClient(ctx context.Context) *WsClient {
-	c.metrics.Add(metrics.MKey("connected"))
+	c.metrics.Add("connected")
 	log.Println("\nconnect scheduler")
 
-	client := NewWsClient(c.cfg.API, ctx)
+	client := NewWsClient(c.cfg.HermesURL, ctx)
 	// add new websocket client to ws storage
 	c.wsClientsStorage[client.id] = client
 	go client.listenRead(c.metrics)
@@ -245,7 +207,7 @@ func (c *WsClient) listenRead(metric *metrics.SafeMetrics) {
 
 		// read data from websocket connection
 		case rawMsg := <-incomingMessages:
-			log.Printf("incoming message %s", string(rawMsg.data))
+			// log.Printf("incoming message %s", string(rawMsg.data))
 			var msg models.Message
 			err := json.Unmarshal(rawMsg.data, &msg)
 			if err != nil {

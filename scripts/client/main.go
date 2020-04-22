@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"io/ioutil"
 	"log"
 	"os"
@@ -12,27 +13,32 @@ import (
 )
 
 func main() {
-	cfg := getConfig("client.config.yaml")
+	cfgPath := flag.String("conf", "client.yaml", "path to config file")
+	flag.Parse()
 
-	interrupt := make(chan os.Signal, 1)
-	signal.Notify(interrupt, os.Interrupt)
+	cfg := getConfig(*cfgPath)
+
 	ctx, cancel := context.WithCancel(context.Background())
+	wsConnector := NewWsConnector(cfg, ctx)
 
 	wg := sync.WaitGroup{}
+	wg.Add(2)
+	wsConnector.metrics.PrettyPrint = false
 
-	wsConnector := NewWsConnector(cfg, ctx)
-	wsConnector.LoadMetrics()
-
-	wg.Add(1)
 	go func() {
 		wsConnector.metrics.Collect()
 		wg.Done()
 	}()
-	wsConnector.metrics.PrettyPrint = false
 
-	go wsConnector.RunWsScheduler()
+	go func() {
+		wsConnector.RunWsScheduler()
+		wg.Done()
+	}()
 
+	interrupt := make(chan os.Signal, 1)
+	signal.Notify(interrupt, os.Interrupt)
 	<-interrupt
+
 	cancel()
 	log.Println("interrupt")
 

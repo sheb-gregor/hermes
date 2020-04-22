@@ -2,12 +2,49 @@
 <meta charset="utf-8"/>
 <title>WebSocket Test</title>
 <style lang="css">
+  body {
+    background-color: rgb(47, 51, 55);
+    color: rgb(137, 131, 131);
+    font-size: larger;
+
+  }
+
+  h1, h2 {
+    text-align: center;
+  }
+
+  a {
+    text-decoration-color: rgb(165, 245, 255);
+    color: rgb(165, 245, 255);
+    width: 100%;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    overflow: hidden;
+  }
+
+  input {
+    border-radius: 0;
+    border: gray;
+    justify-content: center;
+    background-color: transparent;
+    border-bottom-style: ridge;
+    padding-left: 12pt !important;
+    font-size: smaller;
+  }
+
+  .button {
+    font-size: smaller;
+    background-color: darkslategrey;
+    border-style: groove;
+    cursor: pointer;
+    margin: 4pt;
+    padding: 4pt 6pt;
+  }
+
   .main-container {
-    width: 60%;
     min-width: 800px;
     margin: 0 auto;
     padding: 20px;
-    /*background: #9E9E9E;*/
     display: flex;
     flex-direction: column;
     justify-content: space-around;
@@ -22,12 +59,13 @@
   }
 
   .event-block {
-    background: lavender;
+    background: rgb(58, 63, 69);
     overflow-wrap: break-word;
     display: flex;
     flex-direction: column;
     margin: 12pt;
     padding: 12pt;
+    justify-content: space-between;
   }
 
   .event-header {
@@ -49,11 +87,32 @@
     padding: 4pt 4pt 4pt 0;
     margin: 4pt 4pt 4pt 4pt;
   }
+
+  .action-row {
+    justify-content: space-between;
+  }
+
+  .link-label {
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    overflow: hidden;
+    max-width: 215px;
+  }
+
+  .sent-label {
+    color: darkgreen;
+  }
+
+  .error-label {
+    color: darkred;
+  }
 </style>
 
 <script type="text/javascript">
     let pageState = {
-        wsUri: "ws://localhost:8090/_ws/subscribe",
+        // wsUri: "ws://localhost:8090/_ws/subscribe",
+        wsUri: "wss://hermes.dev.luxtrade.qbx44mvxr.work/_ws/subscribe",
+
         auth: {
             token: "",
             role: "user",
@@ -78,7 +137,7 @@
         }
         table += '</div>';
 
-        return '<div class="event-header"> <span style="color: blue;"> ' + eventKind + ': </span> </div>' + table
+        return '<div class="event-header"> <span class="sent-label"> ' + eventKind + ': </span> </div>' + table
     }
 
     function writeToScreen(message) {
@@ -104,27 +163,10 @@
         doSend(json);
 
         writeToScreen("CONNECTED");
-
-        let subs = [
-            // {channel: "***", event: "***"},
-            // {channel: "ctp.notifications.prices"},
-            // {channel: "ctp.notifications.orders", event: "ctp.notifications.orders"},
-            // {channel: "ctp.notifications.accounts", event: "ctp.notifications.accounts"},
-            // {channel: "ctp.notifications.deposits", event: "ctp.notifications.deposits"},
-        ];
-
-
-        for (let i in subs) {
-            doSend({
-                channel: "ws_status",
-                event: "subscribe",
-                command: {channel: subs[i].channel, event: subs[i].event},
-            });
-        }
     }
 
     function onError(evt) {
-        writeToScreen('<span style="color: red;">ERROR:</span> ' + evt.data);
+        writeToScreen('<span class="error-label">ERROR:</span> ' + evt.data);
     }
 
     function onClose(evt) {
@@ -146,47 +188,26 @@
 
     }
 
-    function openWebSocket() {
-        pageState.websocket = new WebSocket(pageState.wsUri);
-        pageState.websocket.onopen = function (evt) {
-            onOpen(evt)
-        };
-        pageState.websocket.onclose = function (evt) {
-            onClose(evt)
-        };
-        pageState.websocket.onmessage = function (evt) {
-            onMessage(evt)
-        };
-        pageState.websocket.onerror = function (evt) {
-            onError(evt)
-        };
-    }
 
-    function init() {
+    function connect() {
         document.getElementById("url-val").innerText = pageState.wsUri;
         document.getElementById("token").value = pageState.auth.token;
         document.getElementById("role").value = pageState.auth.role;
         document.getElementById("origin").value = pageState.auth.origin;
 
         pageState.output = document.getElementById("output");
-        openWebSocket();
+        pageState.websocket = new WebSocket(pageState.wsUri);
+        pageState.websocket.onopen = onOpen
+        pageState.websocket.onclose = onClose
+        pageState.websocket.onmessage = onMessage
+        pageState.websocket.onerror = onError
     }
 
 
     function cleanUp() {
         let events = document.getElementsByClassName('ev');
-
-
         while (events[0]) {
             events[0].parentNode.removeChild(events[0])
-        }
-    }
-
-    function autoCleanUp() {
-        if ( pageState.cleanUpInterval === null ){
-            pageState.cleanUpInterval = setInterval(cleanUp, 10 * 1000);
-        } else {
-            clearInterval(pageState.cleanUpInterval)
         }
     }
 
@@ -194,8 +215,12 @@
     function setUrl() {
         pageState.wsUri = document.getElementById("url").value;
 
+        pageState.websocket.close()
+        pageState.websocket = null
+
+
         cleanUp();
-        init();
+        connect();
     }
 
 
@@ -215,34 +240,35 @@
 
     function subscribe() {
         let channel = document.getElementById("channel").value;
-      let event = document.getElementById("event").value;
+        let event = document.getElementById("event").value;
 
 
-      doSend({
-        channel: "ws_status",
-        event: "subscribe",
-        command: {channel, event},
-      });
+        doSend({
+            channel: "ws_status",
+            event: "subscribe",
+            command: {channel, event},
+        });
     }
 
     function getCache() {
-      doSend({
-        channel: "ws_status",
-        event: "cache",
-        command: {
-          "ctp.notifications.orders": "",
-          "ctp.notifications.accounts": "",
-        }
-      });
+        doSend({
+            channel: "ws_status",
+            event: "cache",
+            command: {
+                "ctp.notifications.orders": "",
+                "ctp.notifications.accounts": "",
+            }
+        });
     }
 
 
-    window.addEventListener("load", init, false);
+    window.addEventListener("load", connect, false);
 
 </script>
 
 <div class="main-container">
   <h2>Hermes WebSocket Test Page</h2>
+
   <div class="management-block">
     <div class="event-block">
       <div class="field">
@@ -251,14 +277,12 @@
       </div>
       <div class="field">
         <div class="field-name"><label for="url-val">Current</label></div>
-        <label id="url-val" class="field-value"> [not set] </label>
+        <label id="url-val" class="field-value link-label"> [not set] </label>
       </div>
 
-      <div class="field">
-        <button onclick="setUrl()"> Set</button>
-        <button onclick="cleanUp()"> Clean Events</button>
-        <button onclick="autoCleanUp()"> Toggle AutoCLean</button>
-        <button onclick="getCache()">Get cache</button>
+      <div class="field action-row">
+        <button class="button" onclick="cleanUp()"> Clean Events</button>
+        <button class="button" onclick="setUrl()"> Set</button>
       </div>
     </div>
 
@@ -275,24 +299,28 @@
         <div class="field-name"><label for="role">Role</label></div>
         <input id="role" class="field-value">
       </div>
-      <div class="field">
-        <button onclick="authorize()"> Authorize</button>
+      <div class="field action-row">
+        <button class="button" onclick="authorize()"> Authorize</button>
       </div>
     </div>
 
     <div class="event-block">
       <div class="field">
         <div class="field-name"><label for="channel">Channel:</label></div>
-        <input id="channel" class="field-value">
+        <input id="channel" class="field-value" value="***">
       </div>
       <div class="field">
         <div class="field-name"><label for="event">Event:</label></div>
-        <input id="event" class="field-value">
+        <input id="event" class="field-value" value="***">
       </div>
-      <div class="field">
-        <button onclick="subscribe()"> Subscribe</button>
+
+      <div class="field action-row">
+        <button class="button" onclick="getCache()">Get Cache</button>
+
+        <button class="button" onclick="subscribe()"> Subscribe</button>
       </div>
     </div>
+
   </div>
   <br>
   <div id="output"></div>

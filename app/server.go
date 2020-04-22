@@ -1,4 +1,4 @@
-package service
+package app
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-chi/chi"
 	"github.com/go-chi/chi/middleware"
+	"github.com/go-chi/cors"
 	"github.com/gorilla/websocket"
 	"github.com/lancer-kit/armory/api/httpx"
 	"github.com/lancer-kit/armory/api/render"
@@ -15,19 +16,19 @@ import (
 	"github.com/lancer-kit/noble"
 	"github.com/lancer-kit/uwe/v2/presets/api"
 	"github.com/pkg/errors"
-	"github.com/rs/cors"
 	"github.com/sirupsen/logrus"
+	"gitlab.inn4science.com/ctp/hermes/app/ws"
 	"gitlab.inn4science.com/ctp/hermes/config"
 	"gitlab.inn4science.com/ctp/hermes/info"
 	"gitlab.inn4science.com/ctp/hermes/models"
-	"gitlab.inn4science.com/ctp/hermes/service/socket"
+	"gitlab.inn4science.com/ctp/hermes/web"
 )
 
-func GetServer(logger *logrus.Entry, cfg config.Cfg, ctx context.Context, hubCom socket.HubCommunicator) *api.Server {
+func GetServer(logger *logrus.Entry, cfg config.Cfg, ctx context.Context, hubCom ws.HubCommunicator) *api.Server {
 	return api.NewServer(cfg.API, getRouter(ctx, logger, cfg, hubCom))
 }
 
-func getRouter(ctx context.Context, logger *logrus.Entry, cfg config.Cfg, hubCom socket.HubCommunicator) http.Handler {
+func getRouter(ctx context.Context, logger *logrus.Entry, cfg config.Cfg, hubCom ws.HubCommunicator) http.Handler {
 	r := chi.NewRouter()
 
 	// A good base middleware stack
@@ -41,7 +42,7 @@ func getRouter(ctx context.Context, logger *logrus.Entry, cfg config.Cfg, hubCom
 			AllowedOrigins: []string{"*"},
 			AllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 			AllowedHeaders: []string{"Accept", "Authorization", "Content-Type",
-				"X-CSRF-Token", "jwt", "X-UID", "Proxy-Authorization"},
+				"X-CSRF-Token", "X-UID", "Proxy-Authorization"},
 			ExposedHeaders:   []string{"Link", "Content-Length"},
 			AllowCredentials: true,
 			MaxAge:           300, // Maximum value not ignored by any of major browsers
@@ -59,13 +60,15 @@ func getRouter(ctx context.Context, logger *logrus.Entry, cfg config.Cfg, hubCom
 	}
 
 	r.Route("/_ws", func(r chi.Router) {
-		r.Get("/info", func(w http.ResponseWriter, r *http.Request) {
-			render.Success(w, info.App)
-		})
-
-		r.Get("/subscribe", h.handleNewWS)
 		r.Get("/gc", func(http.ResponseWriter, *http.Request) { runtime.GC() })
+
+		if cfg.EnableUI {
+			r.Get("/client-ui", h.renderWebPage)
+		}
+
+		r.Get("/info", func(w http.ResponseWriter, r *http.Request) { render.Success(w, info.App) })
 		r.Get("/sessions/authorized", h.handleActiveSession)
+		r.Get("/subscribe", h.handleNewWS)
 
 		// r.Get("/metrics", func(writer http.ResponseWriter, _ *http.Request) {
 		// 	data, _ := socket.MetricsCollector.MarshalJSON()
@@ -80,11 +83,27 @@ func getRouter(ctx context.Context, logger *logrus.Entry, cfg config.Cfg, hubCom
 type handler struct {
 	ctx    context.Context
 	log    *logrus.Entry
-	hubCom socket.HubCommunicator
+	hubCom ws.HubCommunicator
 
 	enableAuth  bool
 	authCfg     map[string]config.AuthProvider
 	serviceKeys map[string]noble.Secret
+}
+
+func (h handler) renderWebPage(w http.ResponseWriter, _ *http.Request) {
+	rawPage, err := web.GetIndexPage()
+	if err != nil {
+		h.log.WithError(err).Error("unable to read index page")
+		render.ServerError(w)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	_, err = w.Write(rawPage)
+	if err != nil {
+		h.log.WithError(err).Error("unable to write index page")
+		return
+	}
 }
 
 func (h handler) handleActiveSession(w http.ResponseWriter, r *http.Request) {
@@ -124,10 +143,10 @@ func (h handler) handleNewWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	client := socket.NewSession(h.ctx, h.log, h.hubCom.EventBus, conn, authInfo, h.authProvider)
+	client := ws.NewSession(h.ctx, h.log, h.hubCom.EventBus, conn, authInfo, h.authProvider)
 
 	logger.Debug("Open new client connection")
-	h.hubCom.EventBus <- &socket.Event{Kind: socket.EKNewSession, Session: client}
+	h.hubCom.EventBus <- &ws.Event{Kind: ws.EKNewSession, Session: client}
 }
 
 func (h *handler) authProvider(req models.AuthRequest) (*models.AuthResponse, int, error) {

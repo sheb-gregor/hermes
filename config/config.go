@@ -22,11 +22,12 @@ type Cfg struct {
 	API      api.Config `json:"api" yaml:"api"`
 	RabbitMQ RabbitMQ   `json:"rabbit_mq" yaml:"rabbit_mq"`
 
-	EnableAuth         bool                    `json:"enable_auth" yaml:"enable_auth"`
+	EnableAuth bool `json:"enable_auth" yaml:"enable_auth"`
+	EnableUI   bool `json:"enable_ui" yaml:"enable_ui"`
+
 	AuthorizedServices map[string]noble.Secret `json:"authorized_services" yaml:"authorized_services"`
 	AuthProviders      map[string]AuthProvider `json:"auth_providers" yaml:"auth_providers"`
-
-	Cache CacheCfg `json:"cache" yaml:"cache"`
+	Cache              CacheCfg                `json:"cache" yaml:"cache"`
 }
 
 func (cfg Cfg) Validate() error {

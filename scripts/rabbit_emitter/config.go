@@ -11,16 +11,14 @@ const (
 )
 
 type RabbitEmitterCfg struct {
-	RabbitMQ   config.RabbitMQ  `json:"rabbit_mq" yaml:"rabbit_mq"`
-	ConnNumber ConnCfg          `json:"conn_number" yaml:"conn_number"`
-	Metrics    config.NutsDBCfg `json:"metrics" yaml:"metrics"`
+	RabbitMQ   config.RabbitMQ `json:"rabbit_mq" yaml:"rabbit_mq"`
+	ConnNumber ConnCfg         `json:"conn_number" yaml:"conn_number"`
 }
 
 func (cfg RabbitEmitterCfg) Validate() error {
 	return validation.ValidateStruct(&cfg,
 		validation.Field(&cfg.RabbitMQ, validation.Required),
 		validation.Field(&cfg.ConnNumber, validation.Required),
-		validation.Field(&cfg.Metrics, validation.Required),
 	)
 }
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"io/ioutil"
 	"log"
 	"os"
@@ -15,17 +16,16 @@ import (
 )
 
 func main() {
-	cfg := getConfig("rabbit_emitter.config.yaml")
+	cfg := getConfig()
 
 	interrupt := make(chan os.Signal, 1)
 	signal.Notify(interrupt, os.Interrupt)
 	ctx, cancel := context.WithCancel(context.Background())
 
-	exchangeRate := (len(cfg.RabbitMQ.Subs) * cfg.ConnNumber.ConnPercentage) / 100
+	// exchangeRate := (len(cfg.RabbitMQ.Subs) * cfg.ConnNumber.ConnPercentage) / 100
 
 	wg := sync.WaitGroup{}
-	mqEmitter := NewRabbitEmitter(cfg.RabbitMQ.Auth.URL(), cfg)
-	mqEmitter.LoadMetrics(ctx)
+	mqEmitter := NewRabbitEmitter(cfg.RabbitMQ.Auth.URL(), cfg, ctx)
 
 	wg.Add(1)
 	go func() {
@@ -35,7 +35,6 @@ func main() {
 	mqEmitter.metrics.PrettyPrint = false
 
 	for i, mqSub := range cfg.RabbitMQ.Subs {
-
 		wg.Add(1)
 		go func(sub config.Exchange, i int) {
 			defer wg.Done()
@@ -47,19 +46,17 @@ func main() {
 				return
 			}
 			mqEmitter.metrics.Add(emitterChannelsMKey)
-
 			timer := time.NewTimer(time.Minute * 5)
-			send := time.NewTicker(time.Millisecond * 500)
-			defer send.Stop()
-
+			send := time.NewTicker(time.Microsecond * 50)
 			for {
 				select {
 				case <-timer.C:
 					mqPublisher.Close()
+					send.Stop()
 					return
 
 				case <-send.C:
-					if i < exchangeRate {
+					if i%2 == 0 {
 						err = mqPublisher.publishMessage(sub, directExchange, mqEmitter.metrics)
 						if err != nil {
 							log.Printf("failed to publish message %s", err)
@@ -83,10 +80,12 @@ func main() {
 	mqEmitter.SaveMetrics()
 }
 
-func getConfig(path string) RabbitEmitterCfg {
-	var cfg RabbitEmitterCfg
+func getConfig() RabbitEmitterCfg {
+	cfgPath := flag.String("conf", "rabbit_emitter.yaml", "path to config")
+	flag.Parse()
 
-	yamlFile, err := ioutil.ReadFile(path)
+	var cfg RabbitEmitterCfg
+	yamlFile, err := ioutil.ReadFile(*cfgPath)
 	if err != nil {
 		log.Fatalf("can`t read confg file: %s", err)
 	}

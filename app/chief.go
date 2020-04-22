@@ -1,10 +1,10 @@
-package service
+package app
 
 import (
 	"github.com/lancer-kit/uwe/v2"
 	"github.com/sirupsen/logrus"
+	"gitlab.inn4science.com/ctp/hermes/app/ws"
 	"gitlab.inn4science.com/ctp/hermes/config"
-	"gitlab.inn4science.com/ctp/hermes/service/socket"
 )
 
 const (
@@ -43,7 +43,7 @@ func InitChief(logger *logrus.Entry, cfg config.Cfg) uwe.Chief {
 
 	logger = logger.WithField("app_layer", "workers")
 
-	hub := socket.NewHub(logger.WithField("worker", WorkerHub), cfg.Cache)
+	hub := ws.NewHub(logger.WithField("worker", WorkerHub), cfg.Cache)
 
 	rabbitConsumer, _ := NewRabbitConsumer(
 		logger.WithField("worker", WorkerRabbitConsumer), cfg.RabbitMQ, hub.EventBus())

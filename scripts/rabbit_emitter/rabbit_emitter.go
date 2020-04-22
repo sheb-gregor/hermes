@@ -5,14 +5,11 @@ import (
 	"io/ioutil"
 	"log"
 
-	"gitlab.inn4science.com/ctp/hermes/metrics"
-	"gitlab.inn4science.com/ctp/hermes/sessions"
-
 	"github.com/pkg/errors"
 	"github.com/streadway/amqp"
-	"syreclabs.com/go/faker"
-
 	"gitlab.inn4science.com/ctp/hermes/config"
+	"gitlab.inn4science.com/ctp/hermes/metrics"
+	"syreclabs.com/go/faker"
 )
 
 const (
@@ -24,39 +21,14 @@ type rabbitEmitter struct {
 	uri string
 	cfg RabbitEmitterCfg
 
-	metrics        *metrics.SafeMetrics
-	metricsStorage sessions.Storage
+	metrics *metrics.SafeMetrics
 }
 
-func NewRabbitEmitter(uri string, cfg RabbitEmitterCfg) *rabbitEmitter {
-	storage, err := sessions.NewNutsDBStorage(cfg.Metrics, sessions.BucketStats{})
-	if err != nil {
-		log.Fatalf("failed to initialize metrics storage: %s", err)
-	}
-
+func NewRabbitEmitter(uri string, cfg RabbitEmitterCfg, ctx context.Context) *rabbitEmitter {
 	return &rabbitEmitter{
-		uri:            uri,
-		cfg:            cfg,
-		metricsStorage: storage,
-	}
-}
-
-func (e *rabbitEmitter) LoadMetrics(ctx context.Context) {
-	e.metrics = new(metrics.SafeMetrics).New(ctx)
-
-	data, err := e.metricsStorage.GetByKey(RabbitMetricsBucket, []byte(metricsKey))
-	if err != nil {
-		log.Printf("failed to get metrics from storage %s", err)
-		return
-	}
-
-	if data == nil {
-		return
-	}
-
-	err = e.metrics.UnmarshalJSON(data)
-	if err != nil {
-		log.Fatalf("failed to umarshal metrics collector%v", err)
+		uri:     uri,
+		cfg:     cfg,
+		metrics: new(metrics.SafeMetrics).New(ctx),
 	}
 }
 
@@ -65,14 +37,9 @@ func (e *rabbitEmitter) SaveMetrics() {
 	if err != nil {
 		log.Fatalf("failed to marshal the metrics: %s", err)
 	}
-	err = ioutil.WriteFile("metrics_report.json", data, 0644)
+	err = ioutil.WriteFile("emitter_metrics_report.json", data, 0644)
 	if err != nil {
 		log.Printf("failed to write the metrics: %s", err)
-	}
-
-	err = e.metricsStorage.Save(RabbitMetricsBucket, []byte(metricsKey), data, 0)
-	if err != nil {
-		log.Fatalf("failed to save metrics %v", err)
 	}
 }
 
@@ -106,8 +73,8 @@ func NewRabbitPublisher(uri string, cfg RabbitEmitterCfg) (*rabbitPublisher, err
 	if err != nil {
 		log.Printf("failed to declare msg publisher with err: %s", err)
 	}
-	log.Printf("declared the publishMessage %s with type %s",
-		cfg.RabbitMQ.Common.Exchange, cfg.RabbitMQ.Common.ExchangeType)
+	// log.Printf("declared the publishMessage %s with type %s",
+	// 	cfg.RabbitMQ.Common.Exchange, cfg.RabbitMQ.Common.ExchangeType)
 	return mqEmitter, err
 }
 
@@ -139,7 +106,8 @@ func (r *rabbitPublisher) publishMessage(mqSub config.Exchange,
 
 	metricsCollector.Add(emitterChannelNameMKey)
 
-	log.Printf("sended %s msg for %s sub publishMessage with %s publishMessage type", msg, mqSub.Exchange, exchangeType)
+	// log.Printf("sended %s msg for %s sub publishMessage with %s publishMessage type",
+	// 	msg, mqSub.Exchange, exchangeType)
 	return nil
 }
 

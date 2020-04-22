@@ -1,4 +1,4 @@
-package service
+package app
 
 import (
 	"context"
@@ -8,9 +8,9 @@ import (
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/streadway/amqp"
+	"gitlab.inn4science.com/ctp/hermes/app/ws"
 	"gitlab.inn4science.com/ctp/hermes/config"
 	"gitlab.inn4science.com/ctp/hermes/models"
-	"gitlab.inn4science.com/ctp/hermes/service/socket"
 )
 
 type RabbitConsumer struct {
@@ -23,11 +23,11 @@ type RabbitConsumer struct {
 
 	queueCancelers  map[string]context.CancelFunc
 	queueManagement chan models.ManageQueue
-	outBus          chan<- *socket.Event
+	outBus          chan<- *ws.Event
 }
 
 func NewRabbitConsumer(logger *logrus.Entry, configuration config.RabbitMQ,
-	outBus chan<- *socket.Event) (uwe.Worker, chan<- models.ManageQueue) {
+	outBus chan<- *ws.Event) (uwe.Worker, chan<- models.ManageQueue) {
 	qm := make(chan models.ManageQueue)
 	return &RabbitConsumer{
 		logger:          logger,
@@ -168,8 +168,8 @@ func (worker *RabbitConsumer) Run(wCtx uwe.Context) error {
 				continue
 			}
 
-			worker.outBus <- &socket.Event{
-				Kind: socket.EKMessage,
+			worker.outBus <- &ws.Event{
+				Kind: ws.EKMessage,
 				Message: &models.Message{
 					Meta: models.MessageMeta{
 						Broadcast: params.Broadcast,

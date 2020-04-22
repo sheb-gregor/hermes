@@ -1,4 +1,4 @@
-package socket
+package ws
 
 import (
 	"context"
@@ -10,9 +10,9 @@ import (
 	"github.com/lancer-kit/uwe/v2"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+	"gitlab.inn4science.com/ctp/hermes/cache"
 	"gitlab.inn4science.com/ctp/hermes/config"
 	"gitlab.inn4science.com/ctp/hermes/models"
-	"gitlab.inn4science.com/ctp/hermes/sessions"
 )
 
 // var MetricsCollector *metrics.SafeMetrics
@@ -24,7 +24,7 @@ type Hub struct {
 	cancel context.CancelFunc
 
 	// subscriptionsAdder chan<- models.ManageQueue
-	cacheStorage sessions.Storage
+	cacheStorage cache.Storage
 
 	eventStream     EventStream
 	sessionStorage  wsSessionStorage
@@ -34,9 +34,10 @@ type Hub struct {
 
 func NewHub(logger *logrus.Entry, cfg config.CacheCfg) *Hub {
 	ctx, cancel := context.WithCancel(context.Background())
-	cacheStorage, err := sessions.NewStorage(cfg)
+
+	cacheStorage, err := cache.NewStorage(cfg)
 	if err != nil {
-		logrus.Fatalf("failed to initialize cache storage: %s", err)
+		logrus.WithError(err).Fatalf("failed to initialize cache storage")
 	}
 
 	return &Hub{
@@ -114,11 +115,7 @@ func (h *Hub) rmSession(sessionID int64) {
 
 func (h Hub) GetSessionsCount() int64 {
 	var counter int64
-	h.sessionStorage.Range(func(key interface{}, value interface{}) bool {
-		counter++
-		return true
-	})
-
+	h.sessionStorage.Range(func(interface{}, interface{}) bool { counter++; return true })
 	return counter
 }
 
@@ -146,19 +143,6 @@ func (h *Hub) Run(wCtx uwe.Context) error {
 
 			case EKAuthorize:
 				h.authorizeSession(*event.SessionInfo)
-				client, err := h.sessionStorage.getByID(event.SessionID)
-				if err != nil {
-					h.log.WithError(err).Warn("unable to get client by SessionID")
-					h.rmSession(event.SessionID)
-					continue
-				}
-
-				//send all direct event to client if the authorization was successful
-				err = h.sendDirectCache(client.send, event.SessionInfo.UserID)
-				if err != nil {
-					h.log.WithError(err).Warn("unable to get direct client cache")
-					continue
-				}
 
 			case EKMessage:
 				err := h.processMessage(event)
@@ -187,7 +171,7 @@ func (h *Hub) Run(wCtx uwe.Context) error {
 	}
 }
 
-func (h Hub) closeSockets() {
+func (h *Hub) closeSockets() {
 	h.sessionStorage.Range(func(key interface{}, value interface{}) bool {
 		uid, ok := key.(int64)
 		if !ok {
@@ -223,7 +207,7 @@ func (h *Hub) getSessionListByUser() map[string]map[int64]models.SessionInfo {
 	return result
 }
 
-func (h Hub) broadCastAll(message *models.Message) {
+func (h *Hub) broadCastAll(message *models.Message) {
 	h.sessionStorage.Range(func(key interface{}, value interface{}) bool {
 		session, ok := value.(*Session)
 		if !ok {
@@ -240,7 +224,7 @@ func (h Hub) broadCastAll(message *models.Message) {
 	})
 }
 
-func (h Hub) sendDirect(message *models.Message) {
+func (h *Hub) sendDirect(message *models.Message) {
 	for sessionID := range h.usersSessions.getSessions(message.Meta.UserUID) {
 		session, err := h.sessionStorage.getByID(sessionID)
 		if err != nil {
@@ -260,7 +244,7 @@ func (h Hub) sendDirect(message *models.Message) {
 	}
 }
 
-func (h Hub) processMessage(event *Event) error {
+func (h *Hub) processMessage(event *Event) error {
 	// MetricsCollector.Add("hub.MessagesChan")
 	msg, err := json.Marshal(event.Message)
 	if err != nil {
@@ -268,7 +252,7 @@ func (h Hub) processMessage(event *Event) error {
 	}
 	if event.Message.Meta.Broadcast {
 		h.broadCastAll(event.Message)
-		err := h.cacheStorage.Save(sessions.BroadcastBucket, nil, msg, event.Message.Meta.TTL)
+		err := h.cacheStorage.Save(cache.BroadcastBucket, nil, msg, event.Message.Meta.TTL)
 		if err != nil {
 			return errors.Wrap(err, "failed to cache the broadcast msg")
 		}
@@ -283,7 +267,7 @@ func (h Hub) processMessage(event *Event) error {
 	return nil
 }
 
-func (h Hub) processHandshake(sessionID int64) {
+func (h *Hub) processHandshake(sessionID int64) {
 	client, err := h.sessionStorage.getByID(sessionID)
 	if err != nil {
 		h.log.WithError(err).Warn("unable to get client by SessionID")
@@ -294,61 +278,31 @@ func (h Hub) processHandshake(sessionID int64) {
 	h.log.WithField("client", client.info.ID).Debug("Response sent to")
 }
 
-func (h Hub) processCache(event *Event) {
+func (h *Hub) processCache(event *Event) {
 	client, err := h.sessionStorage.getByID(event.SessionID)
 	if err != nil {
 		h.log.WithError(err).Warn("unable to get client by SessionID")
 		h.rmSession(event.SessionID)
 	}
 
-	// send all broadcast events to the client if handshake is successful
-	err = h.sendBroadcastCache(client.send, event.Message)
-	if err != nil {
-		h.log.WithError(err).Warn("unable to get broadcast client cache")
-	}
-}
-
-func (h Hub) sendBroadcastCache(clientC chan *models.Message, msg *models.Message) error {
+	// send all broadcast events to the client
 	broadcastEvents, err := h.cacheStorage.GetBroadcast()
-	if len(broadcastEvents) == 0 {
-		h.log.Info("broadcast client cache is empty")
-		return nil
-	}
 	if err != nil {
-		return errors.Wrap(err, "get all from broadcast bucket err")
+		h.log.WithError(err).Warn("unable to get client by SessionID")
 	}
 
-	// match filter channels and broadcast event channels
-	for _, v := range broadcastEvents {
-		for j := range msg.Command {
-			if v.Channel != j {
-				continue
-			}
-
-			clientC <- &models.Message{
-				Channel: v.Channel,
-				Event:   v.Event,
-				Command: v.Command,
-				Data:    v.Data,
-			}
-		}
-	}
-	return nil
-}
-
-func (h Hub) sendDirectCache(clientC chan *models.Message, userUID string) error {
-	directEvents, err := h.cacheStorage.GetDirect(userUID)
+	// send all direct event to client
+	directEvents, err := h.cacheStorage.GetDirect(client.info.UserID)
 	if err != nil {
-		return errors.Wrap(err, "get all from direct bucket err")
+		h.log.WithError(err).Warn("unable to get direct client cache")
 	}
 
-	for _, m := range directEvents {
-		clientC <- &models.Message{
+	for _, m := range append(broadcastEvents, directEvents...) {
+		client.send <- &models.Message{
 			Channel: m.Channel,
 			Event:   m.Event,
 			Command: m.Command,
 			Data:    m.Data,
 		}
 	}
-	return nil
 }

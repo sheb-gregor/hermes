@@ -4,10 +4,10 @@ go 1.13
 
 require (
 	github.com/Masterminds/squirrel v1.2.0 // indirect
-	github.com/boltdb/bolt v1.3.1
 	github.com/cpuguy83/go-md2man/v2 v2.0.0 // indirect
 	github.com/getsentry/sentry-go v0.5.1 // indirect
 	github.com/go-chi/chi v4.0.3+incompatible
+	github.com/go-chi/cors v1.1.1
 	github.com/go-ozzo/ozzo-validation v3.6.0+incompatible
 	github.com/gomodule/redigo v2.0.0+incompatible
 	github.com/google/uuid v1.1.1
@@ -18,7 +18,6 @@ require (
 	github.com/lib/pq v1.3.0 // indirect
 	github.com/onrik/logrus v0.5.1 // indirect
 	github.com/pkg/errors v0.9.1
-	github.com/rs/cors v1.7.0
 	github.com/rubenv/sql-migrate v0.0.0-20200212082348-64f95ea68aa3 // indirect
 	github.com/sirupsen/logrus v1.4.2
 	github.com/streadway/amqp v0.0.0-20200108173154-1c71cc93ed71

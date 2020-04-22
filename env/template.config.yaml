@@ -2,6 +2,7 @@ ws_api:
   host: localhost
   port: 8090
 
+enable_ui: true
 enable_auth: true
 
 authorized_services:
@@ -29,6 +30,7 @@ log:
   json: false
 
 cache:
+  disable: true
   type: "redis" # cache storage type redis/nutsdb
 
   redis:

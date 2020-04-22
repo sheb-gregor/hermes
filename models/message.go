@@ -1,5 +1,7 @@
 package models
 
+import "encoding/json"
+
 const (
 	ActionAddQueue = 1
 	ActionRmQueue  = -1
@@ -33,5 +35,11 @@ type ShortMessage struct {
 }
 
 func (msg *Message) ToShort() ShortMessage {
+	val, eventData := msg.Data[msg.Event]
+	stringVal, str := val.(string)
+	if eventData && str {
+		msg.Data[msg.Event] = json.RawMessage(stringVal)
+	}
+
 	return ShortMessage{Event: msg.Event, Data: msg.Data}
 }

@@ -1,4 +1,4 @@
-package sessions
+package cache
 
 import (
 	"fmt"
@@ -24,6 +24,10 @@ type Storage interface {
 }
 
 func NewStorage(cfg config.CacheCfg) (Storage, error) {
+	if cfg.Disable {
+		return new(storageStub), nil
+	}
+
 	stats := NewBucketStats()
 
 	switch cfg.Type {
@@ -58,3 +62,17 @@ func NewBucketStats() BucketStats {
 func (s *BucketStats) UpdateKey() {
 	s.CurrentLastKey = fmt.Sprintf("event_%d", time.Now().UTC().UnixNano())
 }
+
+type storageStub struct{}
+
+func (s *storageStub) CheckConn() error { return nil }
+
+func (s *storageStub) CloseConnection() error { return nil }
+
+func (s *storageStub) GetByKey(string, []byte) ([]byte, error) { return nil, nil }
+
+func (s *storageStub) Save(string, []byte, []byte, int64) error { return nil }
+
+func (s *storageStub) GetBroadcast() ([]models.Message, error) { return nil, nil }
+
+func (s *storageStub) GetDirect(string) ([]models.Message, error) { return nil, nil }

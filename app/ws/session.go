@@ -1,4 +1,4 @@
-package socket
+package ws
 
 import (
 	"context"
@@ -86,13 +86,21 @@ func NewSession(ctx context.Context, log *logrus.Entry, bus EventStream,
 }
 
 func (c *Session) isSubscribed(channel, event string) bool {
-	if channel == EvCache || channel == EvStatusChannel ||
-		c.subscriptionsChannel.getChannel(WildcardSubscription) {
+	if channel == EvCache || channel == EvStatusChannel {
 		return true
 	}
 
+	if c.subscriptionsChannel.getChannel(WildcardSubscription) {
+		eventSubs := c.subscriptionsEvent.getSubscribeMap(WildcardSubscription)
+		if eventSubs == nil {
+			return true
+		}
+
+		return eventSubs[event] || eventSubs[WildcardSubscription]
+	}
+
 	chanSub := c.subscriptionsChannel.getChannel(channel)
-	eventSubs := c.subscriptionsEvent.getSubscribeMap(event)
+	eventSubs := c.subscriptionsEvent.getSubscribeMap(channel)
 	if eventSubs == nil {
 		return false
 	}
@@ -187,9 +195,9 @@ func (c *Session) readMessages(ctx context.Context, im chan wsMessage) {
 			msgCode, message, err := c.conn.ReadMessage()
 			if err != nil {
 				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-					c.log.WithError(err).Info("socket closed")
+					c.log.WithError(err).Debug("socket closed")
 				} else if err != io.EOF {
-					c.log.Info("error while reading from client:", err)
+					c.log.Debug("error while reading from client:", err)
 				}
 				return
 			}
@@ -214,7 +222,7 @@ func (c *Session) writeToStream() {
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
 		ticker.Stop()
-		c.log.Info("close connection")
+		c.log.Debug("close connection")
 
 		c.bus <- &Event{Kind: EKUnregister, SessionID: c.info.ID}
 	}()
@@ -226,8 +234,7 @@ func (c *Session) writeToStream() {
 			return
 		case message, ok := <-c.send:
 			if !ok {
-				c.log.
-					Debug("ending client write handler")
+				c.log.Debug("ending client write handler")
 				return
 			}
 
@@ -248,7 +255,7 @@ func (c *Session) writeToStream() {
 
 		case <-ticker.C:
 			if err := c.pingWs(); err != nil {
-				c.log.WithError(err).Info("failed to ping socket")
+				c.log.WithError(err).Debug("failed to ping socket")
 				return
 			}
 		}
@@ -258,7 +265,7 @@ func (c *Session) writeToStream() {
 func (c *Session) pingWs() error {
 	rawData := []byte(`{"channel":"ws_status","event":"ping"}`)
 	if err := c.conn.WriteMessage(websocket.TextMessage, rawData); err != nil {
-		c.log.WithError(err).Info("failed to send ping message")
+		c.log.WithError(err).Debug("failed to send ping message")
 		return err
 	}
 
