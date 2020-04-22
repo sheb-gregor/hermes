@@ -28,8 +28,8 @@
     justify-content: center;
     background-color: transparent;
     border-bottom-style: ridge;
-    padding-left: 12pt !important;
     font-size: smaller;
+    text-align: center;
   }
 
   .button {
@@ -110,9 +110,8 @@
 
 <script type="text/javascript">
     let pageState = {
-        // wsUri: "ws://localhost:8090/_ws/subscribe",
-        wsUri: "wss://hermes.dev.luxtrade.qbx44mvxr.work/_ws/subscribe",
-
+        wsUri: "ws://localhost:8090",
+        wsSuffix: "/_ws/subscribe",
         auth: {
             token: "",
             role: "user",
@@ -196,7 +195,7 @@
         document.getElementById("origin").value = pageState.auth.origin;
 
         pageState.output = document.getElementById("output");
-        pageState.websocket = new WebSocket(pageState.wsUri);
+        pageState.websocket = new WebSocket(pageState.wsUri + pageState.wsSuffix);
         pageState.websocket.onopen = onOpen
         pageState.websocket.onclose = onClose
         pageState.websocket.onmessage = onMessage
@@ -261,6 +260,18 @@
         });
     }
 
+    switch (window.location.protocol) {
+        case 'http:': {
+            pageState.wsUri = `ws://${window.location.host}`
+            console.log("http")
+            break
+        }
+        case 'https:': {
+            pageState.wsUri = `wss://${window.location.host}`
+            console.log("https")
+            break
+        }
+    }
 
     window.addEventListener("load", connect, false);
 
