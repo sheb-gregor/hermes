@@ -4,10 +4,9 @@ import (
 	"encoding/json"
 	"flag"
 	"io/ioutil"
-	"log"
 	"net/http"
 
-	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v2"
 )
 
@@ -38,42 +37,50 @@ type authResponse struct {
 }
 
 func main() {
-	configPath := flag.String("conf", "config.yaml", "path to config file")
+	configPath := flag.String("conf", "auth_provider.yaml", "path to config file")
 	flag.Parse()
+
+	logger := logrus.New()
 
 	file, err := ioutil.ReadFile(*configPath)
 	if err != nil {
-		log.Println("[Error] ", errors.Wrap(err, "unable to open config").Error())
+		logger.WithError(err).Error("unable to open config")
 		return
 	}
 
 	var conf = Config{}
 	err = yaml.Unmarshal(file, &conf)
 	if err != nil {
-		log.Println("[Error] ", errors.Wrap(err, "unable to parse config").Error())
+		logger.WithError(err).Error("unable to parse config")
 		return
 	}
 
 	http.HandleFunc("/validate-session", func(w http.ResponseWriter, r *http.Request) {
-
 		request := new(authRequest)
-
 		err := json.NewDecoder(r.Body).Decode(request)
 		if err != nil {
-			log.Print("[ERROR] ", err.Error())
+			logger.WithError(err).Error("unable to parse request")
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
+		log := logger.
+			WithField("token", request.Token).
+			WithField("origin", request.Origin).
+			WithField("role", request.Role)
+
+		log.Info("new request")
 
 		if conf.AllowAll {
 			raw, _ := json.Marshal(authResponse{UserID: request.Token, TTL: -1})
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write(raw)
+			log.Info("response OK")
 			return
 		}
 
 		if _, ok := conf.BlackList[request.Token]; ok {
 			w.WriteHeader(http.StatusUnauthorized)
+			log.Info("response Unauthorized")
 			return
 		}
 
@@ -82,13 +89,17 @@ func main() {
 			raw, _ := json.Marshal(authResponse{UserID: def.UserID, TTL: -1})
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write(raw)
+			log.Info("response OK")
 			return
 		}
 
 		w.WriteHeader(http.StatusUnauthorized)
+		log.Info("response Unauthorized")
 		return
 
 	})
+
+	logger.Info("start listen & serve @ ", conf.HostPort)
 
 	_ = http.ListenAndServe(conf.HostPort, nil)
 }

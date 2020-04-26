@@ -25,13 +25,14 @@ func main() {
 	// exchangeRate := (len(cfg.RabbitMQ.Subs) * cfg.ConnNumber.ConnPercentage) / 100
 
 	wg := sync.WaitGroup{}
-	mqEmitter := NewRabbitEmitter(cfg.RabbitMQ.Auth.URL(), cfg, ctx)
+	mqEmitter := NewRabbitEmitter(cfg.RabbitMQ.Auth.URL(), cfg)
 
 	wg.Add(1)
 	go func() {
-		mqEmitter.metrics.Collect()
+		mqEmitter.metrics.Collect(ctx)
 		wg.Done()
 	}()
+
 	mqEmitter.metrics.PrettyPrint = false
 
 	for i, mqSub := range cfg.RabbitMQ.Subs {

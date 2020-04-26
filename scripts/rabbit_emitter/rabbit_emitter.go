@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"io/ioutil"
 	"log"
 
@@ -24,11 +23,11 @@ type rabbitEmitter struct {
 	metrics *metrics.SafeMetrics
 }
 
-func NewRabbitEmitter(uri string, cfg RabbitEmitterCfg, ctx context.Context) *rabbitEmitter {
+func NewRabbitEmitter(uri string, cfg RabbitEmitterCfg) *rabbitEmitter {
 	return &rabbitEmitter{
 		uri:     uri,
 		cfg:     cfg,
-		metrics: new(metrics.SafeMetrics).New(ctx),
+		metrics: new(metrics.SafeMetrics).New(),
 	}
 }
 

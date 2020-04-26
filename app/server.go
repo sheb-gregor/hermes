@@ -163,7 +163,7 @@ func (h *handler) authProvider(req models.AuthRequest) (*models.AuthResponse, in
 		return nil, http.StatusNotAcceptable, errors.New("role not allowed")
 	}
 
-	resp, err := httpx.PostJSON(provider.URL.Str, req, map[string]string{provider.Header: provider.AccessKey.Get()})
+	resp, err := httpx.NewXClient().PostJSON(provider.URL.Str, req, map[string]string{provider.Header: provider.AccessKey.Get()})
 	if err != nil {
 		return nil, http.StatusInternalServerError, errors.Wrap(err, "unable to check authorization")
 	}
@@ -173,7 +173,7 @@ func (h *handler) authProvider(req models.AuthRequest) (*models.AuthResponse, in
 	}
 
 	authInfo := new(models.AuthResponse)
-	err = httpx.ParseJSONResult(resp, authInfo)
+	err = httpx.NewXClient().ParseJSONResult(resp, authInfo)
 	if resp.StatusCode != http.StatusOK {
 		return nil, http.StatusInternalServerError, errors.Wrap(err, "unable to parse auth response")
 	}

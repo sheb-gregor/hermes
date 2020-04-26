@@ -18,17 +18,12 @@ var (
 	collector Collector
 )
 
-type CollectorOpts struct {
-	Name string
-	Host string
-}
+type CollectorOpts struct{}
 
-func Init(opts CollectorOpts) {
+func Init(_ CollectorOpts) {
 	enabled = true
 	collector = Collector{
-		Service: opts.Name,
-		Host:    opts.Host,
-		gauges:  map[MKey]prometheus.Gauge{},
+		gauges: map[MKey]prometheus.Gauge{},
 	}
 }
 
@@ -85,11 +80,8 @@ type Collector struct {
 func RegisterGauge(name MKey) {
 	gauge := prometheus.NewGauge(
 		prometheus.GaugeOpts{
-			Name: string(name),
-			ConstLabels: map[string]string{
-				"service": collector.Service,
-				"host":    collector.Host,
-			},
+			Name:        string(name),
+			ConstLabels: map[string]string{},
 		})
 	prometheus.MustRegister(gauge)
 	collector.gauges[name] = gauge
@@ -99,11 +91,8 @@ func RegisterGauges(names ...MKey) {
 	for _, name := range names {
 		gauge := prometheus.NewGauge(
 			prometheus.GaugeOpts{
-				Name: string(name),
-				ConstLabels: map[string]string{
-					"service": collector.Service,
-					"host":    collector.Host,
-				},
+				Name:        string(name),
+				ConstLabels: map[string]string{},
 			})
 		prometheus.MustRegister(gauge)
 		collector.gauges[name] = gauge

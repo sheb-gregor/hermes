@@ -3,13 +3,18 @@ package metrics
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"fmt"
+	"io/ioutil"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
+
+	"github.com/pkg/errors"
 )
 
-const Separator = "."
+// nolint:gochecknoglobals
+var Separator = "."
 
 type MKey string
 
@@ -21,13 +26,12 @@ func (key MKey) Split() []string {
 	return strings.Split(string(key), Separator)
 }
 
-type counter struct {
-	val uint64
-}
+type counter struct{ val uint64 }
 
 func (c *counter) Increment() {
 	atomic.AddUint64(&c.val, 1)
 }
+
 func (c *counter) Val() uint64 {
 	return atomic.LoadUint64(&c.val)
 }
@@ -42,12 +46,12 @@ type SafeMetrics struct {
 	busClosed bool
 }
 
-func (*SafeMetrics) New(ctx context.Context) *SafeMetrics {
+func (*SafeMetrics) New() *SafeMetrics {
 	m := SafeMetrics{}
 	m.mutex = sync.RWMutex{}
 	m.Data = make(map[MKey]*counter)
 	m.bus = make(chan MKey, 16)
-	m.ctx = ctx
+
 	return &m
 }
 
@@ -63,7 +67,7 @@ func (m *SafeMetrics) Value(name MKey) uint64 {
 	return m.Data[name].Val()
 }
 
-func (m *SafeMetrics) Collect() {
+func (m *SafeMetrics) Collect(ctx context.Context) {
 	for {
 		select {
 		case name := <-m.bus:
@@ -73,7 +77,7 @@ func (m *SafeMetrics) Collect() {
 			}
 			m.Data[name].Increment()
 			m.mutex.Unlock()
-		case <-m.ctx.Done():
+		case <-ctx.Done():
 			m.busClosed = true
 			close(m.bus)
 			return
@@ -103,24 +107,18 @@ func (m *SafeMetrics) MarshalJSON() ([]byte, error) {
 	return json.Marshal(res)
 }
 
-func (m *SafeMetrics) UnmarshalJSON(rawData []byte) error {
-	data := map[MKey]uint64{}
-
-	if !m.PrettyPrint {
-		err := json.Unmarshal(rawData, &data)
-		if err != nil {
-			log.Fatalf("failed to unmarshal metrics from storage%v", err)
-		}
-
-		for mKey, mValue := range data {
-			m.Data[mKey] = &counter{
-				mValue,
-			}
-		}
+func (m *SafeMetrics) WriteToFile(pathPrefix string, addTime bool) error {
+	raw, err := m.MarshalJSON()
+	if err != nil {
+		return errors.Wrap(err, "can't marshal metrics")
 	}
 
-	// add unmarshalling of prettyPrinted data
-	return nil
+	var name = pathPrefix + "metrics.json"
+	if addTime {
+		name = fmt.Sprintf("%smetrics.%d.json", pathPrefix, time.Now().Unix())
+	}
+
+	return ioutil.WriteFile(name, raw, 0644)
 }
 
 func (m *SafeMetrics) parseNodes(data map[MKey]uint64) map[string]node {

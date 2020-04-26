@@ -110,10 +110,7 @@ func ReadConfig(path string) Cfg {
 	}
 
 	if config.Monitoring.Metrics {
-		metrics.Init(metrics.CollectorOpts{
-			Name: config.Monitoring.Host,
-			Host: config.Monitoring.Host,
-		})
+		metrics.Init(metrics.CollectorOpts{})
 		registerAllKeys()
 	}
 
