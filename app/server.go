@@ -20,6 +20,7 @@ import (
 	"gitlab.inn4science.com/ctp/hermes/app/ws"
 	"gitlab.inn4science.com/ctp/hermes/config"
 	"gitlab.inn4science.com/ctp/hermes/info"
+	"gitlab.inn4science.com/ctp/hermes/metrics"
 	"gitlab.inn4science.com/ctp/hermes/models"
 	"gitlab.inn4science.com/ctp/hermes/web"
 )
@@ -77,6 +78,7 @@ func getRouter(ctx context.Context, logger *logrus.Entry, cfg config.Cfg, hubCom
 		// })
 
 	})
+	r.Mount("/", metrics.GetMonitoringMux(cfg.Monitoring))
 	return r
 }
 

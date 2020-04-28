@@ -5,8 +5,6 @@ import (
 	"github.com/sirupsen/logrus"
 	"gitlab.inn4science.com/ctp/hermes/app/ws"
 	"gitlab.inn4science.com/ctp/hermes/config"
-	"gitlab.inn4science.com/ctp/hermes/info"
-	"gitlab.inn4science.com/ctp/hermes/metrics"
 )
 
 const (
@@ -60,9 +58,9 @@ func InitChief(logger *logrus.Entry, cfg config.Cfg) uwe.Chief {
 	chief.AddWorker(WorkerWsAPI, webServer)
 	chief.AddWorker(WorkerRabbitConsumer, rabbitConsumer)
 
-	if cfg.Monitoring.Metrics {
-		chief.AddWorker("monitoring", metrics.GetMonitoringServer(cfg.Monitoring, info.App))
-	}
+	// if cfg.Monitoring.Metrics {
+	// 	chief.AddWorker("monitoring", metrics.GetMonitoringServer(cfg.Monitoring, info.App))
+	// }
 
 	return chief
 }

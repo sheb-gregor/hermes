@@ -124,6 +124,20 @@ func GetMonitoringServer(cfg MonitoringConf, app uwe.AppInfo) *api.Server {
 	return api.NewServer(cfg.API, r)
 }
 
+func GetMonitoringMux(cfg MonitoringConf) http.Handler {
+	r := chi.NewRouter()
+
+	if cfg.Metrics {
+		r.Handle("/metrics", promhttp.Handler())
+	}
+
+	if cfg.PPROF {
+		r.Mount("/debug", middleware.Profiler())
+	}
+
+	return r
+}
+
 type MonitoringConf struct {
 	Metrics bool       `json:"metrics" yaml:"metrics"`
 	PPROF   bool       `json:"pprof" yaml:"pprof"`
