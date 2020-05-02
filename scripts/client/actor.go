@@ -74,7 +74,7 @@ func (a *Actor) Run(ctx uwe.Context) error {
 
 func (a *Actor) normalListenBehavior(ctx context.Context) error {
 	var err error
-	client, err := NewClient(ctx, a.hermesURL)
+	client, err := NewClient(ctx, a.hermesURL, a.metricsAdd)
 	if err != nil {
 		return errors.Wrap(err, "can't create client")
 	}
@@ -124,16 +124,16 @@ func (a *Actor) normalListenBehavior(ctx context.Context) error {
 		case event := <-events:
 			switch event.Status {
 			case StatusOk:
-				a.metricsAdd(mc.MKey("actor" + mc.Separator + "listen" + mc.Separator + "ok"))
-				a.metricsAdd(mc.MKey("actor" + mc.Separator + "listen" +
+				a.metricsAdd(mc.MKey("actor" + mc.Separator + "receive" + mc.Separator + "ok"))
+				a.metricsAdd(mc.MKey("actor" + mc.Separator + "receive" +
 					mc.Separator + "ok" + mc.Separator + a.opts.Token))
 
-				a.metricsAdd(mc.MKey("actor" + mc.Separator + "listen" +
+				a.metricsAdd(mc.MKey("actor" + mc.Separator + "receive" +
 					mc.Separator + event.Message.Event + mc.Separator + a.opts.Token))
 
 			case StatusError:
-				a.metricsAdd(mc.MKey("actor" + mc.Separator + "listen" + mc.Separator + "error"))
-				a.metricsAdd(mc.MKey("actor" + mc.Separator + "listen" +
+				a.metricsAdd(mc.MKey("actor" + mc.Separator + "receive" + mc.Separator + "error"))
+				a.metricsAdd(mc.MKey("actor" + mc.Separator + "receive" +
 					mc.Separator + "error" + mc.Separator + a.opts.Token))
 
 			case StatusTerminate, StatusNormalStop:
@@ -184,7 +184,7 @@ func (a *Actor) monkeyBehavior(ctx uwe.Context) error {
 
 func (a *Actor) connectAndDrop(ctx context.Context) error {
 	var err error
-	client, err := NewClient(ctx, a.hermesURL)
+	client, err := NewClient(ctx, a.hermesURL, a.metricsAdd)
 	if err != nil {
 		return errors.Wrap(err, "can't create client")
 	}

@@ -34,12 +34,22 @@ type ShortMessage struct {
 	Data  map[string]interface{} `json:"data,omitempty"`
 }
 
-func (msg *Message) ToShort() ShortMessage {
+func (msg Message) ToShort() ShortMessage {
 	val, eventData := msg.Data[msg.Event]
-	stringVal, str := val.(string)
-	if eventData && str {
-		msg.Data[msg.Event] = json.RawMessage(stringVal)
+	m := ShortMessage{
+		Event: msg.Event,
 	}
 
-	return ShortMessage{Event: msg.Event, Data: msg.Data}
+	stringVal, str := val.(string)
+	if eventData && str {
+		m.Data = map[string]interface{}{msg.Event: json.RawMessage(stringVal)}
+		return m
+	}
+
+	m.Data = make(map[string]interface{}, len(msg.Data))
+	for k := range msg.Data {
+		m.Data[k] = msg.Data[k]
+	}
+
+	return m
 }

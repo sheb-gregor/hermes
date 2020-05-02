@@ -1,122 +1,126 @@
 package main
 
 import (
-	"io/ioutil"
+	"fmt"
 	"log"
+	"math/rand"
+	"time"
 
+	"github.com/lancer-kit/uwe/v2"
 	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 	"github.com/streadway/amqp"
-	"gitlab.inn4science.com/ctp/hermes/config"
-	"gitlab.inn4science.com/ctp/hermes/metrics"
+	mc "gitlab.inn4science.com/ctp/hermes/metrics"
+	"gitlab.inn4science.com/ctp/hermes/models"
 	"syreclabs.com/go/faker"
 )
 
-const (
-	broadcastExchange = "broadcast"
-	directExchange    = "direct"
-)
-
-type rabbitEmitter struct {
+type emitterCfg struct {
 	uri string
-	cfg RabbitEmitterCfg
 
-	metrics *metrics.SafeMetrics
+	authFormat   TokenFormat
+	distribution Distribution
+	tickPeriod   uint
 }
 
-func NewRabbitEmitter(uri string, cfg RabbitEmitterCfg) *rabbitEmitter {
-	return &rabbitEmitter{
-		uri:     uri,
-		cfg:     cfg,
-		metrics: new(metrics.SafeMetrics).New(),
-	}
-}
+type emitter struct {
+	emitterCfg
 
-func (e *rabbitEmitter) SaveMetrics() {
-	data, err := e.metrics.MarshalJSON()
-	if err != nil {
-		log.Fatalf("failed to marshal the metrics: %s", err)
-	}
-	err = ioutil.WriteFile("emitter_metrics_report.json", data, 0644)
-	if err != nil {
-		log.Printf("failed to write the metrics: %s", err)
-	}
-}
-
-type rabbitPublisher struct {
 	conn    *amqp.Connection
 	channel *amqp.Channel
+
+	log        *logrus.Entry
+	metricsAdd func(key mc.MKey)
 }
 
-func NewRabbitPublisher(uri string, cfg RabbitEmitterCfg) (*rabbitPublisher, error) {
-	var err error
-
-	mqEmitter := new(rabbitPublisher)
-
-	log.Printf("connecting to amqp %s", uri)
-	mqEmitter.conn, err = amqp.Dial(uri)
-	if err != nil {
-		log.Printf("failed amqp connection: %s", err)
-		return nil, errors.Wrap(err, "failed to dial")
+func NewRabbitEmitter(cfg emitterCfg, mcAdd func(key mc.MKey)) *emitter {
+	return &emitter{
+		emitterCfg: cfg,
+		metricsAdd: mcAdd,
 	}
-
-	mqEmitter.channel, err = mqEmitter.conn.Channel()
-	if err != nil {
-		log.Printf("failed amqp channel conn: %s", err)
-		return nil, errors.Wrap(err, "failed channel connection")
-	}
-
-	err = mqEmitter.channel.ExchangeDeclare(
-		cfg.RabbitMQ.Common.Exchange, cfg.RabbitMQ.Common.ExchangeType,
-		true, false, false, false, nil,
-	)
-	if err != nil {
-		log.Printf("failed to declare msg publisher with err: %s", err)
-	}
-	// log.Printf("declared the publishMessage %s with type %s",
-	// 	cfg.RabbitMQ.Common.Exchange, cfg.RabbitMQ.Common.ExchangeType)
-	return mqEmitter, err
 }
 
-func (r *rabbitPublisher) publishMessage(mqSub config.Exchange,
-	exchangeType string, metricsCollector *metrics.SafeMetrics) error {
-	metricsCollector.Add(metrics.MKey("exchangeType." + exchangeType))
+func (em *emitter) Init() (err error) {
+	em.conn, err = amqp.Dial(em.uri)
+	if err != nil {
+		return errors.Wrap(err, "failed to dial")
+	}
 
-	emitterChannelNameMKey := metrics.MKey(exchangeType + "." + mqSub.Exchange)
-	msg := `{"t":"` + faker.Lorem().Sentence(4) + `"}`
+	em.channel, err = em.conn.Channel()
+	if err != nil {
+		return errors.Wrap(err, "failed channel connection")
+	}
+	return nil
+}
 
-	err := r.channel.Publish(
-		mqSub.Exchange,
-		"",
+func (em *emitter) Run(ctx uwe.Context) error {
+	ticker := time.NewTicker(time.Duration(em.tickPeriod) * time.Millisecond)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return em.Close()
+		case <-ticker.C:
+			if em.distribution.Broadcast {
+				em.publishMessage("")
+			}
+
+			if !em.distribution.DirectRandom {
+				for i := em.authFormat.From; i < em.authFormat.To; i++ {
+					em.publishMessage(fmt.Sprintf(em.authFormat.Format, i))
+				}
+			} else {
+				rand.Seed(time.Now().UnixNano())
+				min := int(em.authFormat.From)
+				max := int(em.authFormat.To)
+				i := rand.Intn(max-min+1) + min
+				em.publishMessage(fmt.Sprintf(em.authFormat.Format, i))
+			}
+		}
+	}
+}
+
+func (em *emitter) publishMessage(uid string) {
+	msg := `{"phrase":"` + faker.Lorem().Sentence(4) + `"}`
+	headers := amqp.Table{
+		models.RHeaderEvent:      em.distribution.Queue,
+		models.RHeaderVisibility: models.VisibilityBroadcast,
+	}
+	mKey := models.VisibilityBroadcast + mc.Separator + em.distribution.Queue
+
+	if uid != "" {
+		headers[models.RHeaderVisibility] = models.VisibilityDirect
+		headers[models.RHeaderUUID] = uid
+		mKey = models.VisibilityDirect + mc.Separator + em.distribution.Queue + mc.Separator + uid
+	}
+
+	err := em.channel.Publish(
+		em.distribution.Exchange,
+		em.distribution.Queue,
 		false,
 		false,
 		amqp.Publishing{
-			Headers: amqp.Table{
-				"uuid":       "someSpecialAuthToken",
-				"visibility": exchangeType,
-				"event_type": mqSub.Exchange,
-			},
+			Headers:      headers,
 			ContentType:  "application/json",
 			Body:         []byte(msg),
 			DeliveryMode: amqp.Transient,
 			Priority:     0,
 		})
 	if err != nil {
-		return errors.Wrap(err, "failed to publish the message")
+		log.Print("[ERROR] ", "failed to publish message:", err.Error())
 	}
 
-	metricsCollector.Add(emitterChannelNameMKey)
-
-	// log.Printf("sended %s msg for %s sub publishMessage with %s publishMessage type",
-	// 	msg, mqSub.Exchange, exchangeType)
-	return nil
+	em.metricsAdd(mc.NewMKey(mKey))
 }
 
-func (r *rabbitPublisher) Close() {
-	if err := r.channel.Close(); err != nil {
-		log.Println(err)
+func (em *emitter) Close() error {
+	if err := em.channel.Close(); err != nil {
+		return err
 	}
 
-	if err := r.conn.Close(); err != nil {
-		log.Println(err)
+	if err := em.conn.Close(); err != nil {
+		return err
 	}
+
+	return nil
 }

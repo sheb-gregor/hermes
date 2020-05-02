@@ -42,12 +42,14 @@ func main() {
 
 	addWorker := func(behavior string, id int) {
 		name := fmt.Sprintf("%s_%d", behavior, id)
+		token := fmt.Sprintf("%s_%d", "user", id)
+
 		chief.AddWorker(uwe.WorkerName(name),
 			NewActor(
 				cfg.HermesURL,
 				ActorOpts{
 					Behavior:       behavior,
-					Token:          name,
+					Token:          token,
 					Role:           cfg.ActorParams.Role,
 					Origin:         cfg.ActorParams.Origin,
 					DropDelay:      cfg.ActorParams.DropDelay,

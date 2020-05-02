@@ -205,7 +205,6 @@ func (h *Hub) getSessionListByUser() map[string]map[int64]models.SessionInfo {
 }
 
 func (h *Hub) broadCastAll(message *models.Message) {
-	metrics.Inc(config.SentBroadcastMessages)
 	h.sessionStorage.Range(func(key interface{}, value interface{}) bool {
 		session, ok := value.(*Session)
 		if !ok {
@@ -218,12 +217,12 @@ func (h *Hub) broadCastAll(message *models.Message) {
 		}
 
 		session.send <- message
+		metrics.Inc(config.SentBroadcastMessages)
 		return true
 	})
 }
 
 func (h *Hub) sendDirect(message *models.Message) {
-	metrics.Inc(config.SentDirectMessages)
 	for sessionID := range h.usersSessions.getSessions(message.Meta.UserUID) {
 		session, err := h.sessionStorage.getByID(sessionID)
 		if err != nil {
@@ -240,6 +239,7 @@ func (h *Hub) sendDirect(message *models.Message) {
 		}
 
 		session.send <- message
+		metrics.Inc(config.SentDirectMessages)
 	}
 }
 

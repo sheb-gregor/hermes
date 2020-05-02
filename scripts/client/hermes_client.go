@@ -9,6 +9,7 @@ import (
 	validation "github.com/go-ozzo/ozzo-validation"
 	"github.com/gorilla/websocket"
 	"github.com/pkg/errors"
+	mc "gitlab.inn4science.com/ctp/hermes/metrics"
 	"gitlab.inn4science.com/ctp/hermes/models"
 )
 
@@ -57,24 +58,25 @@ type Message struct {
 }
 
 type HermesClient struct {
-	ws   *websocket.Conn
-	auth *ClientAuth
+	ws         *websocket.Conn
+	auth       *ClientAuth
+	metricsAdd func(key mc.MKey)
 }
 
-func NewClient(ctx context.Context, hermesURL string) (*HermesClient, error) {
-	return NewClientWihDialer(ctx, hermesURL, &websocket.Dialer{
+func NewClient(ctx context.Context, hermesURL string, metricsAdd func(key mc.MKey)) (*HermesClient, error) {
+	return NewClientWihDialer(ctx, hermesURL, metricsAdd, &websocket.Dialer{
 		Proxy:            http.ProxyFromEnvironment,
 		HandshakeTimeout: 45 * time.Second,
 	})
 }
 
-func NewClientWihDialer(ctx context.Context, hermesURL string, dialer *websocket.Dialer) (*HermesClient, error) {
+func NewClientWihDialer(ctx context.Context, hermesURL string, metricsAdd func(key mc.MKey), dialer *websocket.Dialer) (*HermesClient, error) {
 	conn, _, err := dialer.DialContext(ctx, hermesURL, nil)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to start the ws connection")
 	}
 
-	return &HermesClient{ws: conn}, nil
+	return &HermesClient{ws: conn, metricsAdd: metricsAdd}, nil
 }
 
 func (c *HermesClient) Close() error {
@@ -98,7 +100,7 @@ func (c *HermesClient) Subscribe(channel, event string) error {
 
 	msg.Command["channel"] = channel
 	msg.Command["event"] = event
-
+	c.metricsAdd(mc.MKey("hermes-client" + mc.Separator + "subscribe" + mc.Separator + channel + mc.Separator + event))
 	return c.Send(msg)
 }
 
@@ -125,6 +127,8 @@ func (c *HermesClient) Authorize(cfg ClientAuth) error {
 		Event:   EventAuthorize,
 		Command: authMsg,
 	}
+
+	c.metricsAdd(mc.MKey("hermes-client" + mc.Separator + "authorize" + mc.Separator + cfg.Token))
 	return c.Send(msg)
 }
 
@@ -155,7 +159,7 @@ func (c *HermesClient) Listen(ctx context.Context, messageBus chan<- Event) {
 
 		// read data from websocket connection
 		case rawMsg := <-incomingMessages:
-			if rawMsg.Error == nil {
+			if rawMsg.Error != nil {
 				messageBus <- Event{
 					Status: StatusTerminate,
 					Error:  errors.Wrap(rawMsg.Error, "read error; disconnecting")}
@@ -177,6 +181,7 @@ func (c *HermesClient) Listen(ctx context.Context, messageBus chan<- Event) {
 			case EventPing:
 				pongMsg := Message{Channel: ChannelWsStatus, Event: EventPong}
 				err = c.Send(pongMsg)
+				c.metricsAdd(mc.MKey("hermes-client" + mc.Separator + "receive" + mc.Separator + "ping"))
 
 			case EventAuthorize:
 				if msg.Data["authorize"] != "success" {
@@ -185,8 +190,12 @@ func (c *HermesClient) Listen(ctx context.Context, messageBus chan<- Event) {
 						Message: msg}
 				}
 
+				c.metricsAdd(mc.MKey("hermes-client" + mc.Separator + "receive" + mc.Separator + "authorized"))
 			default:
 				messageBus <- Event{Status: StatusOk, Message: msg}
+				c.metricsAdd(mc.MKey("hermes-client" + mc.Separator + "receive" + mc.Separator + "event"))
+				c.metricsAdd(mc.MKey("hermes-client" + mc.Separator + "receive" +
+					mc.Separator + "event" + mc.Separator + msg.Event))
 			}
 		}
 	}

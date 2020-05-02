@@ -79,7 +79,7 @@ func (m *SafeMetrics) Collect(ctx context.Context) {
 			m.mutex.Unlock()
 		case <-ctx.Done():
 			m.busClosed = true
-			close(m.bus)
+			// close(m.bus)
 			return
 		}
 	}

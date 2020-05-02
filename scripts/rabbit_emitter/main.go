@@ -1,84 +1,70 @@
 package main
 
 import (
-	"context"
 	"flag"
+	"fmt"
 	"io/ioutil"
 	"log"
-	"os"
-	"os/signal"
-	"sync"
-	"time"
 
-	"gitlab.inn4science.com/ctp/hermes/config"
+	"github.com/lancer-kit/uwe/v2"
+	"github.com/sirupsen/logrus"
 	"gitlab.inn4science.com/ctp/hermes/metrics"
 	"gopkg.in/yaml.v2"
 )
 
+type metricsCollector struct{ *metrics.SafeMetrics }
+
+func (m *metricsCollector) Init() error               { return nil }
+func (m *metricsCollector) Run(ctx uwe.Context) error { m.SafeMetrics.Collect(ctx); return nil }
+
 func main() {
 	cfg := getConfig()
+	var collector metricsCollector
+	collector.SafeMetrics = collector.SafeMetrics.New()
 
-	interrupt := make(chan os.Signal, 1)
-	signal.Notify(interrupt, os.Interrupt)
-	ctx, cancel := context.WithCancel(context.Background())
+	logger := logrus.New().WithField("app", "hermes-client")
+	logger.Logger.Level = logrus.InfoLevel
 
-	// exchangeRate := (len(cfg.RabbitMQ.Subs) * cfg.ConnNumber.ConnPercentage) / 100
+	chief := uwe.NewChief()
+	chief.UseDefaultRecover()
+	chief.SetEventHandler(func(event uwe.Event) {
+		var level logrus.Level
+		switch event.Level {
+		case uwe.LvlFatal, uwe.LvlError:
+			level = logrus.ErrorLevel
+		case uwe.LvlInfo:
+			level = logrus.InfoLevel
+		default:
+			level = logrus.WarnLevel
+		}
 
-	wg := sync.WaitGroup{}
-	mqEmitter := NewRabbitEmitter(cfg.RabbitMQ.Auth.URL(), cfg)
+		logger.WithFields(event.Fields).
+			Log(level, event.Message)
+	})
 
-	wg.Add(1)
-	go func() {
-		mqEmitter.metrics.Collect(ctx)
-		wg.Done()
-	}()
+	chief.AddWorker("metrics_collector", &collector)
+	rabbitURL := cfg.RabbitMQ.URL()
 
-	mqEmitter.metrics.PrettyPrint = false
+	for i, exchange := range cfg.Exchanges {
+		emCfg := emitterCfg{
+			uri:          rabbitURL,
+			authFormat:   cfg.AuthFormat,
+			distribution: exchange,
+			tickPeriod:   cfg.TickPeriod,
+		}
 
-	for i, mqSub := range cfg.RabbitMQ.Subs {
-		wg.Add(1)
-		go func(sub config.Exchange, i int) {
-			defer wg.Done()
-
-			emitterChannelsMKey := metrics.MKey("subs")
-			mqPublisher, err := NewRabbitPublisher(mqEmitter.uri, cfg)
-			if err != nil {
-				log.Printf("failed to create mq submitter: %s", err)
-				return
-			}
-			mqEmitter.metrics.Add(emitterChannelsMKey)
-			timer := time.NewTimer(time.Minute * 5)
-			send := time.NewTicker(time.Microsecond * 50)
-			for {
-				select {
-				case <-timer.C:
-					mqPublisher.Close()
-					send.Stop()
-					return
-
-				case <-send.C:
-					if i%2 == 0 {
-						err = mqPublisher.publishMessage(sub, directExchange, mqEmitter.metrics)
-						if err != nil {
-							log.Printf("failed to publish message %s", err)
-							return
-						}
-					} else {
-						err = mqPublisher.publishMessage(sub, broadcastExchange, mqEmitter.metrics)
-						if err != nil {
-							log.Printf("failed to publish message %s", err)
-							return
-						}
-					}
-				}
-			}
-		}(mqSub, i)
+		chief.AddWorker(
+			uwe.WorkerName(fmt.Sprintf("emmiter_%d", i)),
+			NewRabbitEmitter(emCfg, collector.Add),
+		)
 	}
-	<-interrupt
-	cancel()
-	log.Println("interrupt")
 
-	mqEmitter.SaveMetrics()
+	chief.Run()
+
+	err := collector.WriteToFile("./", true)
+	if err != nil {
+		logger.WithError(err).Error("failed to write metrics to file")
+	}
 }
 
 func getConfig() RabbitEmitterCfg {
@@ -90,6 +76,7 @@ func getConfig() RabbitEmitterCfg {
 	if err != nil {
 		log.Fatalf("can`t read confg file: %s", err)
 	}
+
 	err = yaml.Unmarshal(yamlFile, &cfg)
 	if err != nil {
 		log.Fatalf("can`t unmarshal the config file: %s", err)
