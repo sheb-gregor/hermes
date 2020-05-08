@@ -16,10 +16,11 @@ import (
 
 const (
 	// Time allowed to read the next pong message from the peer.
-	pongWait = 30 * time.Second
+	pongWait = 15 * time.Second
 
 	// Send pings to peer with this period. Must be less than pongWait.
-	pingPeriod = (pongWait * 9) / 10
+	// pingPeriod = (pongWait * 9) / 10
+	pingPeriod = 10 * time.Second
 
 	// Maximum message size allowed from peer.
 	maxMessageSize = 512
@@ -35,6 +36,7 @@ const (
 	EvAuthorize     = "authorize"
 	EvSubscribe     = "subscribe"
 	EvUnsubscribe   = "unsubscribe"
+	EvMute          = "mute"
 	EvStatusChannel = "ws_status"
 	EvPong          = "pong"
 	EvCache         = "cache"
@@ -62,6 +64,7 @@ type Session struct {
 	log                  *logrus.Entry
 	subscriptionsChannel activeChannel
 	subscriptionsEvent   activeEvent
+	mutedEvents          activeEvent
 
 	authProvider AuthProviderF
 }
@@ -82,12 +85,17 @@ func NewSession(ctx context.Context, log *logrus.Entry, bus EventStream,
 		send:                 make(chan *models.Message, maxChanLen/2),
 		subscriptionsChannel: activeChannel{new(sync.Map)},
 		subscriptionsEvent:   activeEvent{new(sync.Map)},
+		mutedEvents:          activeEvent{new(sync.Map)},
 	}
 }
 
 func (c *Session) isSubscribed(channel, event string) bool {
 	if channel == EvCache || channel == EvStatusChannel {
 		return true
+	}
+
+	if _, ok := c.mutedEvents.Load(event); ok {
+		return false
 	}
 
 	if c.subscriptionsChannel.getChannel(WildcardSubscription) {
@@ -128,11 +136,17 @@ func (c *Session) addSubscription(channel, event string) {
 
 	eventSubs[event] = true
 	c.subscriptionsEvent.Store(channel, eventSubs)
+
+	c.mutedEvents.Delete(event)
 }
 
 func (c *Session) rmSubscription(channel string) {
 	c.subscriptionsChannel.Store(channel, false)
 	c.subscriptionsEvent.Store(channel, map[string]bool{})
+}
+
+func (c *Session) muteEvent(event string) {
+	c.mutedEvents.Store(event, struct{}{})
 }
 
 type wsMessage struct {
@@ -308,9 +322,13 @@ func (c *Session) processIncomingMessage(raw []byte) error {
 
 	case EvUnsubscribe:
 		// MetricsCollector.Add(metrics.MKey("sessionStorage." + c.userUID + ".EvUnsubscribe"))
-
 		channel := userMsg.Command["channel"]
 		c.rmSubscription(channel)
+
+	case EvMute:
+		// MetricsCollector.Add(metrics.MKey("sessionStorage." + c.userUID + ".EvMute"))
+		event := userMsg.Command["event"]
+		c.muteEvent(event)
 
 	case EvPong:
 		c.log.Debug("client synchronization - pong received")

@@ -106,6 +106,10 @@
   .error-label {
     color: darkred;
   }
+
+  .json-data {
+    white-space: pre-wrap;
+  }
 </style>
 
 <script type="text/javascript">
@@ -128,7 +132,7 @@
             table += '<div class="field">';
             table += '<div class="field-name"> <b>' + key + ":</b></div>";
             if (typeof data[key] == 'object') {
-                table += '<div class="field-value">' + JSON.stringify(data[key], null, '') + "</div>";
+                table += '<div class="field-value json-data">' + JSON.stringify(data[key], undefined, 4) + "</div>";
             } else {
                 table += '<div class="field-value">' + data[key] + "</div>";
             }
@@ -249,6 +253,16 @@
         });
     }
 
+    function mute() {
+        let event = document.getElementById("event-to-mute").value;
+
+        doSend({
+            channel: "ws_status",
+            event: "mute",
+            command: {event},
+        });
+    }
+
     function getCache() {
         doSend({
             channel: "ws_status",
@@ -329,6 +343,17 @@
         <button class="button" onclick="getCache()">Get Cache</button>
 
         <button class="button" onclick="subscribe()"> Subscribe</button>
+      </div>
+    </div>
+
+    <div class="event-block">
+      <div class="field">
+        <div class="field-name"><label for="event-to-mute">Event:</label></div>
+        <input id="event-to-mute" class="field-value" value="***">
+      </div>
+
+      <div class="field action-row">
+        <button class="button" onclick="mute()"> Mute</button>
       </div>
     </div>
 
