@@ -124,6 +124,7 @@
         websocket: null,
         output: null,
         cleanUpInterval: null,
+        hidePing: false
     };
 
     function eventMsgToHTML(eventKind, data) {
@@ -151,7 +152,9 @@
     }
 
     function doSend(message) {
-        writeToScreen(eventMsgToHTML("SENT", message));
+        if (message.event !== 'ping' && message.event !== 'pong') {
+            writeToScreen(eventMsgToHTML("SENT", message));
+        }
         pageState.websocket.send(JSON.stringify(message));
     }
 
@@ -178,8 +181,9 @@
 
     function onMessage(evt) {
         let response = JSON.parse(evt.data)
-
-        writeToScreen(eventMsgToHTML('RESPONSE', response));
+        if (response.event !== 'ping' && response.event !== 'pong') {
+            writeToScreen(eventMsgToHTML('RESPONSE', response));
+        }
 
         if (response.event === "ping") {
             let json = {
@@ -261,6 +265,10 @@
             event: "mute",
             command: {event},
         });
+    }
+
+    function hidePing() {
+        pageState.hidePing = !pageState.hidePing
     }
 
     function getCache() {
@@ -353,6 +361,7 @@
       </div>
 
       <div class="field action-row">
+        <button class="button" onclick="hidePing()"> Hide Ping</button>
         <button class="button" onclick="mute()"> Mute</button>
       </div>
     </div>

@@ -36,9 +36,7 @@ type ShortMessage struct {
 
 func (msg Message) ToShort() ShortMessage {
 	val, eventData := msg.Data[msg.Event]
-	m := ShortMessage{
-		Event: msg.Event,
-	}
+	m := ShortMessage{Event: msg.Event}
 
 	stringVal, str := val.(string)
 	if eventData && str {
