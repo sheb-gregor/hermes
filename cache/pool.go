@@ -3,9 +3,10 @@ package cache
 import (
 	"time"
 
+	"hermes/config"
+
 	"github.com/gomodule/redigo/redis"
 	"github.com/pkg/errors"
-	"gitlab.inn4science.com/ctp/hermes/config"
 )
 
 func NewPool(conf config.RedisConf) *redis.Pool {

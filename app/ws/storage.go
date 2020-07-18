@@ -3,8 +3,9 @@ package ws
 import (
 	"sync"
 
+	"hermes/models"
+
 	"github.com/pkg/errors"
-	"gitlab.inn4science.com/ctp/hermes/models"
 )
 
 type syncStorage struct{ *sync.Map }

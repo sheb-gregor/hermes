@@ -6,9 +6,10 @@ import (
 	"io/ioutil"
 	"log"
 
+	"hermes/metrics"
+
 	"github.com/lancer-kit/uwe/v2"
 	"github.com/sirupsen/logrus"
-	"gitlab.inn4science.com/ctp/hermes/metrics"
 	"gopkg.in/yaml.v2"
 )
 

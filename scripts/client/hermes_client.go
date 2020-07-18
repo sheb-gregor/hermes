@@ -6,11 +6,12 @@ import (
 	"net/http"
 	"time"
 
+	mc "hermes/metrics"
+	"hermes/models"
+
 	validation "github.com/go-ozzo/ozzo-validation"
 	"github.com/gorilla/websocket"
 	"github.com/pkg/errors"
-	mc "gitlab.inn4science.com/ctp/hermes/metrics"
-	"gitlab.inn4science.com/ctp/hermes/models"
 )
 
 const (

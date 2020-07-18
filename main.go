@@ -3,11 +3,12 @@ package main
 import (
 	"os"
 
+	"hermes/actions"
+	"hermes/config"
+	"hermes/info"
+
 	"github.com/lancer-kit/armory/log"
 	"github.com/urfave/cli"
-	"gitlab.inn4science.com/ctp/hermes/actions"
-	"gitlab.inn4science.com/ctp/hermes/config"
-	"gitlab.inn4science.com/ctp/hermes/info"
 )
 
 func main() {

@@ -1,4 +1,4 @@
-module gitlab.inn4science.com/ctp/hermes
+module hermes
 
 go 1.13
 
@@ -10,7 +10,6 @@ require (
 	github.com/go-chi/cors v1.1.1
 	github.com/go-ozzo/ozzo-validation v3.6.0+incompatible
 	github.com/gomodule/redigo v2.0.0+incompatible
-	github.com/google/uuid v1.1.1
 	github.com/gorilla/websocket v1.4.2
 	github.com/lancer-kit/armory v1.7.4
 	github.com/lancer-kit/noble v1.0.9

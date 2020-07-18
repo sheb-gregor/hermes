@@ -1,10 +1,11 @@
 package actions
 
 import (
+	"hermes/app"
+	"hermes/config"
+
 	"github.com/lancer-kit/armory/log"
 	"github.com/urfave/cli"
-	"gitlab.inn4science.com/ctp/hermes/app"
-	"gitlab.inn4science.com/ctp/hermes/config"
 )
 
 func serveAction(c *cli.Context) error {

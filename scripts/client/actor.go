@@ -5,11 +5,12 @@ import (
 	"fmt"
 	"time"
 
+	mc "hermes/metrics"
+
 	"github.com/gorilla/websocket"
 	"github.com/lancer-kit/uwe/v2"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
-	mc "gitlab.inn4science.com/ctp/hermes/metrics"
 )
 
 const (

@@ -4,20 +4,22 @@ import (
 	"context"
 	"sync"
 
+	"hermes/app/ws"
+	"hermes/config"
+	"hermes/metrics"
+	"hermes/models"
+
 	"github.com/lancer-kit/uwe/v2"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/streadway/amqp"
-	"gitlab.inn4science.com/ctp/hermes/app/ws"
-	"gitlab.inn4science.com/ctp/hermes/config"
-	"gitlab.inn4science.com/ctp/hermes/metrics"
-	"gitlab.inn4science.com/ctp/hermes/models"
 )
 
 type RabbitConsumer struct {
-	config config.RabbitMQ
-	logger *logrus.Entry
-	wg     *sync.WaitGroup
+	config  config.RabbitMQ
+	logger  *logrus.Entry
+	devMode bool
+	wg      *sync.WaitGroup
 
 	conn    *amqp.Connection
 	channel *amqp.Channel
@@ -30,8 +32,10 @@ type RabbitConsumer struct {
 func NewRabbitConsumer(logger *logrus.Entry, configuration config.RabbitMQ,
 	outBus chan<- *ws.Event) (uwe.Worker, chan<- models.ManageQueue) {
 	qm := make(chan models.ManageQueue)
+
 	return &RabbitConsumer{
 		logger:          logger,
+		devMode:         logger.Logger.Level == logrus.TraceLevel,
 		config:          configuration,
 		outBus:          outBus,
 		queueManagement: qm,
@@ -149,16 +153,18 @@ func (worker *RabbitConsumer) Run(wCtx uwe.Context) error {
 				"consumer_tag": message.ConsumerTag,
 				"exchange":     message.Exchange})
 
-			logger.
-				WithFields(logrus.Fields{
-					"delivery_tag": message.DeliveryTag,
-					"message_id":   message.MessageId,
-					"content_type": message.ContentType,
-					"event_kind":   message.Headers[models.RHeaderEvent],
-					"visibility":   message.Headers[models.RHeaderVisibility],
-					"body":         string(message.Body),
-				}).
-				Trace("received a deliveries from consumer")
+			if worker.devMode {
+				logger.
+					WithFields(logrus.Fields{
+						"delivery_tag": message.DeliveryTag,
+						"message_id":   message.MessageId,
+						"content_type": message.ContentType,
+						"event_kind":   message.Headers[models.RHeaderEvent],
+						"visibility":   message.Headers[models.RHeaderVisibility],
+						"body":         string(message.Body),
+					}).
+					Trace("received a deliveries from consumer")
+			}
 
 			params, err := models.ParseRabbitHeader(message)
 			if err != nil {
@@ -190,7 +196,15 @@ func (worker *RabbitConsumer) Run(wCtx uwe.Context) error {
 		case <-wCtx.Done():
 			cancel()
 			worker.wg.Wait()
+
 			worker.logger.Info("Receive exit code, stop all consumers")
+			if err := worker.channel.Close(); err != nil {
+				worker.logger.WithError(err).Warn("fail when try to close channel")
+			}
+			if err := worker.conn.Close(); err != nil {
+				worker.logger.WithError(err).Warn("fail when try to close connection")
+			}
+
 			return nil
 		}
 	}
@@ -222,30 +236,24 @@ func (worker *RabbitConsumer) startConsumingRoutine(ctx context.Context,
 			if message.Body == nil {
 				continue
 			}
-			logger.WithFields(logrus.Fields{
-				"delivery_tag": message.DeliveryTag,
-				"exchange":     message.Exchange,
-				"routing_key":  message.RoutingKey,
-				"consumer_tag": message.ConsumerTag,
-				"message_id":   message.MessageId,
-				"content_type": message.ContentType,
-				"visibility":   message.Headers["visibility"],
-				"uuid":         message.Headers["uuid"],
-				"body":         string(message.Body),
-			}).
-				Trace("received a new message from queue")
+
+			if worker.devMode {
+				logger.WithFields(logrus.Fields{
+					"delivery_tag": message.DeliveryTag,
+					"exchange":     message.Exchange,
+					"routing_key":  message.RoutingKey,
+					"consumer_tag": message.ConsumerTag,
+					"message_id":   message.MessageId,
+					"content_type": message.ContentType,
+					"visibility":   message.Headers["visibility"],
+					"uuid":         message.Headers["uuid"],
+					"body":         string(message.Body),
+				}).Trace("received a new message from queue")
+			}
 
 			out <- message
 
 		case <-ctx.Done():
-			if err := worker.channel.Close(); err != nil {
-				logger.WithError(err).Warn("fail when try to close channel")
-			}
-
-			if err := worker.conn.Close(); err != nil {
-				logger.WithError(err).Warn("fail when try to close channel")
-			}
-
 			logger.Info("Receive exit code, stop working")
 			return nil
 		}

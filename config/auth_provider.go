@@ -1,10 +1,11 @@
 package config
 
 import (
+	"hermes/models"
+
 	validation "github.com/go-ozzo/ozzo-validation"
 	"github.com/lancer-kit/armory/tools"
 	"github.com/lancer-kit/noble"
-	"gitlab.inn4science.com/ctp/hermes/models"
 )
 
 type AuthProvider struct {

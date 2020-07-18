@@ -1,7 +1,7 @@
 package ws
 
 import (
-	"gitlab.inn4science.com/ctp/hermes/models"
+	"hermes/models"
 )
 
 type EventStream chan *Event

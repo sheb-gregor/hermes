@@ -3,13 +3,14 @@ package config
 import (
 	"io/ioutil"
 
+	"hermes/metrics"
+
 	validation "github.com/go-ozzo/ozzo-validation"
 	"github.com/lancer-kit/armory/log"
 	"github.com/lancer-kit/noble"
 	"github.com/lancer-kit/uwe/v2/presets/api"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
-	"gitlab.inn4science.com/ctp/hermes/metrics"
 	"gopkg.in/yaml.v2"
 )
 

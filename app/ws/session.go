@@ -8,12 +8,13 @@ import (
 	"sync"
 	"time"
 
+	"hermes/config"
+	"hermes/metrics"
+	"hermes/models"
+
 	"github.com/gorilla/websocket"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
-	"gitlab.inn4science.com/ctp/hermes/config"
-	"gitlab.inn4science.com/ctp/hermes/metrics"
-	"gitlab.inn4science.com/ctp/hermes/models"
 )
 
 const (

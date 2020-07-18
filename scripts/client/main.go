@@ -3,9 +3,10 @@ package main
 import (
 	"fmt"
 
+	"hermes/metrics"
+
 	"github.com/lancer-kit/uwe/v2"
 	"github.com/sirupsen/logrus"
-	"gitlab.inn4science.com/ctp/hermes/metrics"
 )
 
 type metricsCollector struct{ *metrics.SafeMetrics }

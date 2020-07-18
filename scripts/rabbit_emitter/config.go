@@ -1,8 +1,9 @@
 package main
 
 import (
+	"hermes/config"
+
 	validation "github.com/go-ozzo/ozzo-validation"
-	"gitlab.inn4science.com/ctp/hermes/config"
 )
 
 type RabbitEmitterCfg struct {

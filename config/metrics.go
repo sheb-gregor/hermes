@@ -1,7 +1,7 @@
 package config
 
 import (
-	"gitlab.inn4science.com/ctp/hermes/metrics"
+	"hermes/metrics"
 )
 
 const (

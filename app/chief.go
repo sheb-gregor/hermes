@@ -1,10 +1,11 @@
 package app
 
 import (
+	"hermes/app/ws"
+	"hermes/config"
+
 	"github.com/lancer-kit/uwe/v2"
 	"github.com/sirupsen/logrus"
-	"gitlab.inn4science.com/ctp/hermes/app/ws"
-	"gitlab.inn4science.com/ctp/hermes/config"
 )
 
 const (

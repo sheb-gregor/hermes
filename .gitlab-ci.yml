@@ -5,7 +5,7 @@ services:
 
 variables:
   PACKAGE_PATH: /go/src/gitlab.inn4science.com/ctp
-  PROJECT_PATH: gitlab.inn4science.com/ctp/hermes
+  PROJECT_PATH: hermes
   GO111MODULE: 'on'
 
   REGISTRY: ${REGISTRY_URL}/${CI_PROJECT_NAMESPACE}

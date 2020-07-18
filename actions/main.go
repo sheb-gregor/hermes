@@ -1,8 +1,9 @@
 package actions
 
 import (
+	"hermes/config"
+
 	"github.com/urfave/cli"
-	"gitlab.inn4science.com/ctp/hermes/config"
 )
 
 func GetCommands() []cli.Command {

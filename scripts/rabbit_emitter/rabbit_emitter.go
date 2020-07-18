@@ -6,12 +6,13 @@ import (
 	"math/rand"
 	"time"
 
+	mc "hermes/metrics"
+	"hermes/models"
+
 	"github.com/lancer-kit/uwe/v2"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/streadway/amqp"
-	mc "gitlab.inn4science.com/ctp/hermes/metrics"
-	"gitlab.inn4science.com/ctp/hermes/models"
 	"syreclabs.com/go/faker"
 )
 
