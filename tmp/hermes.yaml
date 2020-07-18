@@ -1,0 +1,115 @@
+api:
+  host: 0.0.0.0
+  port: 8090
+
+enable_ui: true
+enable_auth: false
+
+authorized_services:
+  exchange: env:EXCHANGE_HERMES_ACCESS_KEY
+
+auth_providers:
+  user:
+    url: http://127.0.0.1:13449/validate-session
+    access_key: "env:HERMES_AUTH_PROVIDER_ACCESS_KEY"
+    header: X-Api-Key
+    allowed_roles:
+      - user
+  admin:
+    url: http://127.0.0.1:13449/validate-session
+    access_key: "env:HERMES_AUTH_PROVIDER_ACCESS_KEY"
+    header: X-Api-Key
+    allowed_roles:
+      - admin
+
+log:
+  app_name: hermes
+  level: "env:HERMES_LOG_LEVEL"
+  add_trace: true
+  sentry: ""
+  json: false
+
+monitoring:
+  metrics: true
+  pprof: true
+  service: hermes
+  host: local
+  api:
+    host: 0.0.0.0
+    port: 18090
+
+cache:
+  disable: true
+
+#  redis:
+#    dev_mode: false # when true, redis will be not used
+#    ping_interval: 60
+#    auth: "env:REDIS_PASSWORD"
+#    host: "redis:6379"
+#    record_ttl: 60
+#    max_idle: 5 # Maximum number of idle connections in the pool.
+#    max_active: 0 # When zero, there is no limit on the number of connections in the pool.
+
+rabbit_mq:
+  auth:
+    host: 127.0.0.1:5673
+    user: "env:RABBITMQ_DEFAULT_USER"
+    password: "env:RABBITMQ_DEFAULT_PASS"
+    create_exchanges: false
+    strict_mode: false
+    consumer_tag: hermes
+  common:
+    exchange: test-direct
+    exchange_type: direct
+  subs:
+    - exchange: test.alpha.alpha
+      exchange_type: fanout
+      queue: test.alpha.alpha
+    - exchange: test.alpha.beta
+      exchange_type: fanout
+      queue: test.alpha.beta
+    - exchange: test.alpha.delta
+      exchange_type: fanout
+      queue: test.alpha.delta
+    - exchange: test.alpha.gamma
+      exchange_type: fanout
+      queue: test.alpha.gamma
+
+    - exchange: test.beta.alpha
+      exchange_type: fanout
+      queue: test.beta.alpha
+    - exchange: test.beta.beta
+      exchange_type: fanout
+      queue: test.beta.beta
+    - exchange: test.beta.delta
+      exchange_type: fanout
+      queue: test.beta.delta
+    - exchange: test.beta.gamma
+      exchange_type: fanout
+      queue: test.beta.gamma
+
+#    - exchange: test.delta.alpha
+#      exchange_type: fanout
+#      queue: test.delta.alpha
+#    - exchange: test.delta.beta
+#      exchange_type: fanout
+#      queue: test.delta.beta
+#    - exchange: test.delta.delta
+#      exchange_type: fanout
+#      queue: test.delta.delta
+#    - exchange: test.delta.gamma
+#      exchange_type: fanout
+#      queue: test.delta.gamma
+#
+#    - exchange: test.gamma.alpha
+#      exchange_type: fanout
+#      queue: test.gamma.alpha
+#    - exchange: test.gamma.beta
+#      exchange_type: fanout
+#      queue: test.gamma.beta
+#    - exchange: test.gamma.delta
+#      exchange_type: fanout
+#      queue: test.gamma.delta
+#    - exchange: test.gamma.gamma
+#      exchange_type: fanout
+#      queue: test.gamma.gamma

@@ -1,0 +1,94 @@
+
+rabbit_mq:
+  host: 0.0.0.0:5673
+  user: "env:RABBITMQ_DEFAULT_USER"
+  password: "env:RABBITMQ_DEFAULT_PASS"
+  consumer_tag: emitter_for_hermes
+
+auth_format:
+  format: "user_%d"
+  from: 0
+  to: 10
+
+tick_period: 1
+
+exchanges:
+  - exchange: test.alpha.alpha
+    exchange_type: fanout
+    queue: test.alpha.alpha
+    broadcast: true
+    direct_random: false
+
+  - exchange: test.alpha.beta
+    exchange_type: fanout
+    queue: test.alpha.beta
+    broadcast: true
+    direct_random: true
+
+  - exchange: test.alpha.delta
+    exchange_type: fanout
+    queue: test.alpha.delta
+    broadcast: true
+    direct_random: false
+
+  - exchange: test.alpha.gamma
+    exchange_type: fanout
+    queue: test.alpha.gamma
+    broadcast: true
+    direct_random: true
+
+
+  - exchange: test.beta.alpha
+    exchange_type: fanout
+    queue: test.beta.alpha
+    broadcast: true
+    direct_random: false
+
+  - exchange: test.beta.beta
+    exchange_type: fanout
+    queue: test.beta.beta
+    broadcast: true
+    direct_random: true
+
+  - exchange: test.beta.delta
+    exchange_type: fanout
+    queue: test.beta.delta
+    broadcast: true
+    direct_random: false
+
+  - exchange: test.beta.gamma
+    exchange_type: fanout
+    queue: test.beta.gamma
+    broadcast: true
+    direct_random: true
+
+
+
+#    - exchange: test.delta.alpha
+#      exchange_type: fanout
+#      queue: test.delta.alpha
+#    - exchange: test.delta.beta
+#      exchange_type: fanout
+#      queue: test.delta.beta
+#    - exchange: test.delta.delta
+#      exchange_type: fanout
+#      queue: test.delta.delta
+#    - exchange: test.delta.gamma
+#      exchange_type: fanout
+#      queue: test.delta.gamma
+#
+#    - exchange: test.gamma.alpha
+#      exchange_type: fanout
+#      queue: test.gamma.alpha
+#    - exchange: test.gamma.beta
+#      exchange_type: fanout
+#      queue: test.gamma.beta
+#    - exchange: test.gamma.delta
+#      exchange_type: fanout
+#      queue: test.gamma.delta
+#    - exchange: test.gamma.gamma
+#      exchange_type: fanout
+#      queue: test.gamma.gamma
+
+conn_number:
+  conn_percentage: 50
