@@ -1,6 +1,4 @@
 vendor/* binary
 bindata.go binary
-web_bindata.go binary
-Gopkg.lock binary
 go.sum binary
-tests/test-data/crypto_data
+web_bindata.go binary

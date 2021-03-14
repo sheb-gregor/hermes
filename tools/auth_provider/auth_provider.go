@@ -36,6 +36,7 @@ type authResponse struct {
 	TTL    int64  `json:"ttl"`
 }
 
+//nolint:funlen
 func main() {
 	configPath := flag.String("conf", "auth_provider.yaml", "path to config file")
 	flag.Parse()
@@ -95,8 +96,6 @@ func main() {
 
 		w.WriteHeader(http.StatusUnauthorized)
 		log.Info("response Unauthorized")
-		return
-
 	})
 
 	logger.Info("start listen & serve @ ", conf.HostPort)

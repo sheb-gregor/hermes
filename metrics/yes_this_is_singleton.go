@@ -13,6 +13,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
+//nolint:gochecknoglobals
 var (
 	enabled   bool
 	collector Collector

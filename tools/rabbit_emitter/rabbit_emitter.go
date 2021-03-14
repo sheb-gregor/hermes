@@ -37,6 +37,9 @@ type emitter struct {
 func NewRabbitEmitter(cfg emitterCfg, mcAdd func(key mc.MKey)) *emitter {
 	return &emitter{
 		emitterCfg: cfg,
+		conn:       nil,
+		channel:    nil,
+		log:        nil,
 		metricsAdd: mcAdd,
 	}
 }

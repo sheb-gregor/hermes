@@ -6,17 +6,17 @@ enable_ui: true
 enable_auth: true
 
 authorized_services:
-  exchange: env:EXCHANGE_HERMES_ACCESS_KEY
+  exchange: env:HERMES_ACCESS_KEY
 
 auth_providers:
   user:
-    url: http://exchange:8080/v1/users/validate-session
+    url: http://my.api.local:8080/validate-session
     access_key: env:HERMES_AUTH_PROVIDER_ACCESS_KEY
     header: X-Api-Key
     allowed_roles:
       - user
   admin:
-    url: http://exchange:8080/v1/users/validate-session
+    url: http://my.api.local:9080/validate-session
     access_key: env:HERMES_AUTH_PROVIDER_ACCESS_KEY
     header: X-Api-Key
     allowed_roles:
@@ -55,18 +55,9 @@ rabbit_mq:
     password: "env:RABBITMQ_PASSWORD"
     consumer_tag: hermes
   common:
-    exchange: ctp.notifications.direct
+    exchange: notifications.direct
     exchange_type: direct
   subs:
-    - exchange: ctp.notifications.market_info
+    - exchange: app.notifications
       exchange_type: fanout
-      queue: ctp.hermes.market_info
-    - exchange: ctp.notifications.orders
-      exchange_type: fanout
-      queue: ctp.hermes.orders
-    - exchange: ctp.notifications.admin_updates
-      exchange_type: fanout
-      queue: ctp.hermes.admin_updates
-    - exchange: ctp.notifications.user_updates
-      exchange_type: fanout
-      queue: ctp.hermes.user_updates
+      queue: hermes.notifications

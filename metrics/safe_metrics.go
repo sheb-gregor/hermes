@@ -13,8 +13,7 @@ import (
 	"github.com/pkg/errors"
 )
 
-// nolint:gochecknoglobals
-var Separator = "."
+var Separator = "." //nolint:gochecknoglobals
 
 type MKey string
 
@@ -41,7 +40,7 @@ type SafeMetrics struct {
 	Data        map[MKey]*counter `json:"data"`
 	PrettyPrint bool              `json:"-"`
 
-	ctx       context.Context
+	// ctx       context.Context
 	bus       chan MKey
 	busClosed bool
 }
@@ -118,7 +117,7 @@ func (m *SafeMetrics) WriteToFile(pathPrefix string, addTime bool) error {
 		name = fmt.Sprintf("%smetrics.%d.json", pathPrefix, time.Now().Unix())
 	}
 
-	return ioutil.WriteFile(name, raw, 0644)
+	return ioutil.WriteFile(name, raw, 0600)
 }
 
 func (m *SafeMetrics) parseNodes(data map[MKey]uint64) map[string]node {

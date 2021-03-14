@@ -3,8 +3,8 @@ package ws
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"runtime"
-	"sync"
 	"time"
 
 	"hermes/cache"
@@ -17,21 +17,16 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-// var MetricsCollector *metrics.SafeMetrics
-
 // Hub maintains the set of active sessionStorage and broadcasts MessagesChan to the connected clients.
 type Hub struct {
-	log    *logrus.Entry
+	// log    *logrus.Entry
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	// subscriptionsAdder chan<- models.ManageQueue
 	cacheStorage cache.Storage
 
-	eventStream     EventStream
-	sessionStorage  wsSessionStorage
-	usersSessions   *wsUsersSessions
-	liveConnections wsLiveSessions
+	eventStream    EventStream
+	sessionStorage SessionStorage
 }
 
 func NewHub(logger *logrus.Entry, cfg config.CacheCfg) *Hub {
@@ -43,15 +38,13 @@ func NewHub(logger *logrus.Entry, cfg config.CacheCfg) *Hub {
 	}
 
 	return &Hub{
-		log:          logger.WithField("sub_service", "ws-hub"),
+		// log:          logger.WithField("sub_service", "ws-hub"),
 		ctx:          ctx,
 		cancel:       cancel,
 		cacheStorage: cacheStorage,
 
-		sessionStorage:  wsSessionStorage{Map: new(sync.Map)},
-		liveConnections: wsLiveSessions{Map: new(sync.Map)},
-		usersSessions:   &wsUsersSessions{},
-		eventStream:     make(EventStream, 256),
+		sessionStorage: newSessionStorage(),
+		eventStream:    make(EventStream, 256),
 	}
 }
 
@@ -63,7 +56,7 @@ type HubCommunicator struct {
 func (h *Hub) Communicator() HubCommunicator {
 	return HubCommunicator{
 		EventBus:    h.eventStream,
-		GetSessions: h.getSessionListByUser,
+		GetSessions: h.sessionStorage.ListUsersSessions,
 	}
 }
 func (h *Hub) EventBus() EventStream {
@@ -75,8 +68,7 @@ func (h *Hub) Context() context.Context {
 }
 
 func (h *Hub) addSession(client *Session) {
-	h.sessionStorage.Store(client.info.ID, client)
-	h.liveConnections.Store(client.info.ID, true)
+	h.sessionStorage.AddSession(client.info.ID, client)
 
 	// Allow collection of memory referenced by the caller by doing all work in
 	// new goroutines.
@@ -86,26 +78,23 @@ func (h *Hub) addSession(client *Session) {
 }
 
 func (h *Hub) authorizeSession(session models.SessionInfo) {
-	h.usersSessions.addSessionID(session.UserID, session)
+	h.sessionStorage.AddUserSession(session.UserID, session)
 	metrics.Inc(config.WSAuthorizedSessions)
 }
 
 func (h *Hub) rmSession(sessionID int64) {
-	client, err := h.sessionStorage.getByID(sessionID)
-	if err != nil {
-		h.log.WithError(err).WithField("connUID", sessionID).
-			Warn("unable to get client by connUID")
+	client := h.sessionStorage.RMSession(sessionID)
+	if client == nil {
+		// h.log.WithError(err).WithField("connUID", sessionID).
+		// 	Warn("unable to get client by connUID")
 		return
 	}
 
-	h.sessionStorage.Delete(sessionID)
-	h.liveConnections.Delete(sessionID)
-	h.usersSessions.rmSessionID(client.info.UserID, sessionID)
-
-	if err = client.Close(); err != nil {
-		h.log.WithError(err).
-			WithField("connUID", sessionID).
-			Error("failed to close client session")
+	if err := client.Close(); err != nil {
+		fmt.Println(err)
+		// h.log.WithError(err).
+		// 	WithField("connUID", sessionID).
+		// 	Error("failed to close client session")
 	}
 
 	metrics.Inc(config.WSClosedSessions)
@@ -114,9 +103,7 @@ func (h *Hub) rmSession(sessionID int64) {
 }
 
 func (h Hub) GetSessionsCount() int64 {
-	var counter int64
-	h.sessionStorage.Range(func(interface{}, interface{}) bool { counter++; return true })
-	return counter
+	return h.sessionStorage.GetSessionsCount()
 }
 
 func (h *Hub) Init() error {
@@ -129,7 +116,7 @@ func (h *Hub) Run(wCtx uwe.Context) error {
 	for {
 		select {
 		case <-gcTicker.C:
-			h.log.Info("force garbage collection running...")
+			// h.log.Info("force garbage collection running...")
 			runtime.GC()
 
 		case event := <-h.eventStream:
@@ -146,7 +133,7 @@ func (h *Hub) Run(wCtx uwe.Context) error {
 			case EKMessage:
 				err := h.processMessage(event)
 				if err != nil {
-					h.log.WithError(err).Debug("failed to process message")
+					// h.log.WithError(err).Debug("failed to process message")
 					continue
 				}
 
@@ -170,72 +157,46 @@ func (h *Hub) Run(wCtx uwe.Context) error {
 }
 
 func (h *Hub) closeSockets() {
-	h.sessionStorage.Range(func(key interface{}, value interface{}) bool {
-		uid, ok := key.(int64)
-		if !ok {
-			h.log.WithField("status", ok).Error("unable to cast value to connUID")
-			return false
+	h.sessionStorage.RMSessions(func(id int64, session *Session) {
+		if err := session.Close(); err != nil {
+			fmt.Println(err)
+			// h.log.WithError(err).
+			// 	WithField("connUID", sessionID).
+			// 	Error("failed to close client session")
 		}
 
-		h.rmSession(uid)
-
-		return true
+		metrics.Inc(config.WSClosedSessions)
+		metrics.Dec(config.WSActiveSessions)
+		if session.info.UserID != "" {
+			metrics.Dec(config.WSAuthorizedSessions)
+		}
 	})
-}
-
-func (h *Hub) getSessionListByUser() map[string]map[int64]models.SessionInfo {
-	result := map[string]map[int64]models.SessionInfo{}
-
-	h.usersSessions.Range(func(key interface{}, value interface{}) bool {
-		userID, ok := key.(string)
-		if !ok {
-			h.log.WithField("status", ok).Error("unable to cast key to userID")
-			return false
-		}
-
-		sessions, ok := value.(map[int64]models.SessionInfo)
-		if !ok {
-			h.log.WithField("status", ok).Error("unable to cast value to session list")
-			return false
-		}
-		result[userID] = sessions
-		return true
-	})
-
-	return result
 }
 
 func (h *Hub) broadCastAll(message *models.Message) {
-	h.sessionStorage.Range(func(key interface{}, value interface{}) bool {
-		session, ok := value.(*Session)
-		if !ok {
-			h.log.WithField("status", ok).Error("unable to cast value to client")
-			return false
-		}
-
+	h.sessionStorage.ForEach(func(id int64, session *Session) {
 		if message.Meta.Role != models.VRoleAny && session.info.Role != message.Meta.Role {
-			return true
+			return
 		}
 
 		session.send <- message
 		metrics.Inc(config.SentBroadcastMessages)
-		return true
 	})
 }
 
 func (h *Hub) sendDirect(message *models.Message) {
-	for sessionID := range h.usersSessions.getSessions(message.Meta.UserUID) {
-		session, err := h.sessionStorage.getByID(sessionID)
-		if err != nil {
-			h.log.WithError(err).Error("unable to get session by id")
+	for sessionID := range h.sessionStorage.GetUserSessions(message.Meta.UserUID) {
+		session := h.sessionStorage.GetSession(sessionID)
+		if session == nil {
+			// h.log.WithError(err).Error("unable to get session by id")
 			continue
 		}
 
 		if message.Meta.Role != models.VRoleAny && session.info.Role != message.Meta.Role {
-			h.log.WithError(err).WithFields(logrus.Fields{
-				"event_role":   message.Meta.Role,
-				"session_role": session.info.Role,
-			}).Error("user role mismatch with required by event")
+			// h.log.WithError(err).WithFields(logrus.Fields{
+			// 	"event_role":   message.Meta.Role,
+			// 	"session_role": session.info.Role,
+			// }).Error("user role mismatch with required by event")
 			return
 		}
 
@@ -267,33 +228,36 @@ func (h *Hub) processMessage(event *Event) error {
 }
 
 func (h *Hub) processHandshake(sessionID int64) {
-	client, err := h.sessionStorage.getByID(sessionID)
-	if err != nil {
-		h.log.WithError(err).Warn("unable to get client by SessionID")
+	client := h.sessionStorage.GetSession(sessionID)
+	if client == nil {
+		// h.log.WithError(err).Warn("unable to get client by SessionID")
 		h.rmSession(sessionID)
 		return
 	}
 	client.send <- &models.Message{Event: EvHandshake, Channel: EvStatusChannel}
-	h.log.WithField("client", client.info.ID).Debug("Response sent to")
+	// h.log.WithField("client", client.info.ID).Debug("Response sent to")
 }
 
 func (h *Hub) processCache(event *Event) {
-	client, err := h.sessionStorage.getByID(event.SessionID)
-	if err != nil {
-		h.log.WithError(err).Warn("unable to get client by SessionID")
+	client := h.sessionStorage.GetSession(event.SessionID)
+	if client == nil {
+		// h.log.WithError(err).Warn("unable to get client by SessionID")
 		h.rmSession(event.SessionID)
+		return
 	}
 
 	// send all broadcast events to the client
 	broadcastEvents, err := h.cacheStorage.GetBroadcast()
 	if err != nil {
-		h.log.WithError(err).Warn("unable to get client by SessionID")
+		fmt.Println(err)
+		// h.log.WithError(err).Warn("unable to get client by SessionID")
 	}
 
 	// send all direct event to client
 	directEvents, err := h.cacheStorage.GetDirect(client.info.UserID)
 	if err != nil {
-		h.log.WithError(err).Warn("unable to get direct client cache")
+		fmt.Println(err)
+		// h.log.WithError(err).Warn("unable to get direct client cache")
 	}
 
 	for _, m := range append(broadcastEvents, directEvents...) {

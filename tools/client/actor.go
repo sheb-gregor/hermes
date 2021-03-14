@@ -93,7 +93,6 @@ func (a *Actor) normalListenBehavior(ctx context.Context) error {
 		if err != nil {
 			a.log.WithError(err).Error("client close failed")
 		}
-		return
 	}()
 
 	err = client.Handshake()

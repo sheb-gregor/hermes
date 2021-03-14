@@ -71,7 +71,9 @@ func NewClient(ctx context.Context, hermesURL string, metricsAdd func(key mc.MKe
 	})
 }
 
-func NewClientWihDialer(ctx context.Context, hermesURL string, metricsAdd func(key mc.MKey), dialer *websocket.Dialer) (*HermesClient, error) {
+func NewClientWihDialer(ctx context.Context, hermesURL string,
+	metricsAdd func(key mc.MKey), dialer *websocket.Dialer) (*HermesClient, error) {
+	//nolint:bodyclose
 	conn, _, err := dialer.DialContext(ctx, hermesURL, nil)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to start the ws connection")

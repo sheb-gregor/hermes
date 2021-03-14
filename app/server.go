@@ -8,7 +8,6 @@ import (
 
 	"hermes/app/ws"
 	"hermes/config"
-	"hermes/info"
 	"hermes/metrics"
 	"hermes/models"
 	"hermes/web"
@@ -53,8 +52,8 @@ func getRouter(ctx context.Context, logger *logrus.Entry, cfg config.Cfg, hubCom
 	}
 
 	h := handler{
-		ctx:         ctx,
-		log:         logger,
+		ctx: ctx,
+		// log:         logger,
 		hubCom:      hubCom,
 		enableAuth:  cfg.EnableAuth,
 		authCfg:     cfg.AuthProviders,
@@ -68,7 +67,7 @@ func getRouter(ctx context.Context, logger *logrus.Entry, cfg config.Cfg, hubCom
 			r.Get("/client-ui", h.renderWebPage)
 		}
 
-		r.Get("/info", func(w http.ResponseWriter, r *http.Request) { render.Success(w, info.App) })
+		r.Get("/info", func(w http.ResponseWriter, r *http.Request) { render.Success(w, config.App) })
 		r.Get("/sessions/authorized", h.handleActiveSession)
 		r.Get("/subscribe", h.handleNewWS)
 
@@ -84,8 +83,8 @@ func getRouter(ctx context.Context, logger *logrus.Entry, cfg config.Cfg, hubCom
 }
 
 type handler struct {
-	ctx    context.Context
-	log    *logrus.Entry
+	ctx context.Context
+	// log    *logrus.Entry
 	hubCom ws.HubCommunicator
 
 	enableAuth  bool
@@ -96,7 +95,7 @@ type handler struct {
 func (h handler) renderWebPage(w http.ResponseWriter, _ *http.Request) {
 	rawPage, err := web.GetIndexPage()
 	if err != nil {
-		h.log.WithError(err).Error("unable to read index page")
+		// h.log.WithError(err).Error("unable to read index page")
 		render.ServerError(w)
 		return
 	}
@@ -104,7 +103,7 @@ func (h handler) renderWebPage(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	_, err = w.Write(rawPage)
 	if err != nil {
-		h.log.WithError(err).Error("unable to write index page")
+		// h.log.WithError(err).Error("unable to write index page")
 		return
 	}
 }
@@ -126,7 +125,7 @@ func (h handler) handleActiveSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h handler) handleNewWS(w http.ResponseWriter, r *http.Request) {
-	logger := log.IncludeRequest(h.log, r)
+	// logger := log.IncludeRequest(h.log, r)
 
 	authInfo := models.SessionInfo{
 		ID:        time.Now().UnixNano(),
@@ -142,13 +141,13 @@ func (h handler) handleNewWS(w http.ResponseWriter, r *http.Request) {
 
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		h.log.WithError(err).Error("unable to upgrade http protocol")
+		// h.log.WithError(err).Error("unable to upgrade http protocol")
 		return
 	}
 
-	client := ws.NewSession(h.ctx, h.log, h.hubCom.EventBus, conn, authInfo, h.authProvider)
+	client := ws.NewSession(h.ctx, nil, h.hubCom.EventBus, conn, authInfo, h.authProvider)
 
-	logger.Debug("Open new client connection")
+	// logger.Debug("Open new client connection")
 	h.hubCom.EventBus <- &ws.Event{Kind: ws.EKNewSession, Session: client}
 }
 
@@ -166,10 +165,12 @@ func (h *handler) authProvider(req models.AuthRequest) (*models.AuthResponse, in
 		return nil, http.StatusNotAcceptable, errors.New("role not allowed")
 	}
 
-	resp, err := httpx.NewXClient().PostJSON(provider.URL.Str, req, map[string]string{provider.Header: provider.AccessKey.Get()})
+	resp, err := httpx.NewXClient().PostJSON(provider.URL.Str, req,
+		map[string]string{provider.Header: provider.AccessKey.Get()})
 	if err != nil {
 		return nil, http.StatusInternalServerError, errors.Wrap(err, "unable to check authorization")
 	}
+	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, resp.StatusCode, errors.New("forbidden")
