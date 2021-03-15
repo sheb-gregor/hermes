@@ -3,7 +3,6 @@ package ws
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"sync"
@@ -15,7 +14,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/pkg/errors"
-	"github.com/sirupsen/logrus"
+	"github.com/rs/zerolog"
 )
 
 const (
@@ -46,10 +45,10 @@ const (
 	EvCache         = "cache"
 )
 
-// const (
-// 	unableToUnmarshal = "unable to unmarshal json:"
-// 	unableToMarshal   = "unable to marshal data:"
-// )
+const (
+	unableToUnmarshal = "unable to unmarshal json"
+	unableToMarshal   = "unable to marshal data:"
+)
 
 type AuthProviderFunc func(models.AuthRequest) (*models.AuthResponse, int, error)
 
@@ -60,7 +59,7 @@ type Session struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
-	// log    *logrus.Entry
+	log    func() *zerolog.Logger
 
 	// Buffered channel of outbound MessagesChan.
 	bus  EventStream
@@ -71,11 +70,10 @@ type Session struct {
 	authProvider AuthProviderFunc
 }
 
-func NewSession(pCtx context.Context, log *logrus.Entry, bus EventStream,
-	conn *websocket.Conn, info models.SessionInfo, authProvider AuthProviderFunc) *Session {
+func NewSession(pCtx context.Context, logProvider func() zerolog.Logger,
+	bus EventStream, conn *websocket.Conn, info models.SessionInfo, authProvider AuthProviderFunc) *Session {
 
 	ctx, cancel := context.WithCancel(pCtx)
-
 	return &Session{
 		ctx:          ctx,
 		cancel:       cancel,
@@ -83,7 +81,10 @@ func NewSession(pCtx context.Context, log *logrus.Entry, bus EventStream,
 		bus:          bus,
 		info:         info,
 		authProvider: authProvider,
-		// log:          log.WithField("session_id", info.ID),
+		log: func() *zerolog.Logger {
+			l := logProvider().With().Int64("session_id", info.ID).Logger()
+			return &l
+		},
 		send:    make(chan *models.Message, maxChanLen/2),
 		subInfo: NewSubscriptions(),
 	}
@@ -115,7 +116,7 @@ type wsMessage struct {
 // nolint:funlen
 func (c *Session) readStream() {
 	defer func() {
-		// c.log.Info("connection closed")
+		c.log().Info().Msg("connection closed")
 		c.bus <- &Event{Kind: EKUnregister, SessionID: c.info.ID}
 		c.wg.Done()
 	}()
@@ -139,14 +140,14 @@ func (c *Session) readStream() {
 		case m := <-incomingMessages:
 			switch m.mType {
 			case websocket.PingMessage, websocket.PongMessage:
-				// c.log.Trace("ws proto synchronization")
+				c.log().Trace().Msg("ws proto synchronization")
 				continue
 			case websocket.CloseMessage:
 				cancelReader()
 				return
 			}
 			if err := c.processIncomingMessage(m.data); err != nil {
-				// c.log.WithError(err).Info("failed to check message event")
+				c.log().Warn().Err(err).Msg("failed to check message event")
 				continue
 			}
 		}
@@ -166,17 +167,15 @@ func (c *Session) readMessages(ctx context.Context, im chan wsMessage) {
 			msgCode, message, err := c.conn.ReadMessage()
 			if err != nil {
 				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-					// c.log.WithError(err).Debug("socket closed")
-					fmt.Println(err)
+					c.log().Warn().Err(err).Msg("socket closed")
 				} else if err != io.EOF {
-					fmt.Println(err)
-					// c.log.Debug("error while reading from client:", err)
+					c.log().Warn().Err(err).Msg("error while reading from client")
 				}
 				return
 			}
 
 			if message == nil {
-				// c.log.Debug("nil message from read channel")
+				c.log().Warn().Msg("nil message from read channel")
 				continue
 			}
 
@@ -194,7 +193,7 @@ func (c *Session) writeToStream() {
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
 		ticker.Stop()
-		// c.log.Debug("close connection")
+		c.log().Debug().Msg("close connection")
 
 		c.bus <- &Event{Kind: EKUnregister, SessionID: c.info.ID}
 		c.wg.Done()
@@ -208,12 +207,12 @@ func (c *Session) writeToStream() {
 			return
 		case message, ok := <-c.send:
 			if !ok {
-				// c.log.Debug("ending client write handler")
+				c.log().Debug().Msg("ending client write handler")
 				return
 			}
 
 			if message == nil {
-				// c.log.Debug("nil message from read channel")
+				c.log().Debug().Msg("nil message from read channel")
 				continue
 			}
 
@@ -222,16 +221,15 @@ func (c *Session) writeToStream() {
 				continue
 			}
 			if err := c.writeToClient(message); err != nil {
-				// c.log.WithError(err).Debug("error when writing to client")
+				c.log().Warn().Err(err).Msg("error when writing to client")
 				return
 			}
 
 			metrics.Inc(config.DeliveredMessages)
-			// c.log.WithField("event", message.Event).Trace("write message to connection")
 
 		case <-ticker.C:
 			if err := c.pingWs(); err != nil {
-				// c.log.WithError(err).Debug("failed to ping socket")
+				c.log().Warn().Err(err).Msg("failed to ping socket")
 				return
 			}
 		}
@@ -241,11 +239,10 @@ func (c *Session) writeToStream() {
 func (c *Session) pingWs() error {
 	rawData := []byte(`{"channel":"ws_status","event":"ping"}`)
 	if err := c.conn.WriteMessage(websocket.TextMessage, rawData); err != nil {
-		// c.log.WithError(err).Debug("failed to send ping message")
 		return err
 	}
 
-	// c.log.Debug("client synchronization - ping sent")
+	c.log().Debug().Msg("client synchronization - ping sent")
 	return nil
 }
 
@@ -253,9 +250,9 @@ func (c *Session) processIncomingMessage(raw []byte) error {
 	userMsg := new(models.Message)
 	err := json.Unmarshal(raw, userMsg)
 	if err != nil {
-		// c.log.WithError(err).
-		// 	WithField("handler", "processIncomingMessage").
-		// 	Error(unableToUnmarshal, string(raw))
+		c.log().Error().Err(err).
+			Str("handler", "processIncomingMessage").
+			Msg(unableToUnmarshal)
 		return err
 	}
 
@@ -287,7 +284,7 @@ func (c *Session) processIncomingMessage(raw []byte) error {
 		c.subInfo.MuteEvent(event)
 
 	case EvPong:
-		// c.log.Debug("client synchronization - pong received")
+		c.log().Debug().Msg("client synchronization - pong received")
 	}
 
 	return nil
@@ -306,7 +303,7 @@ func (c *Session) processAuthEvent(userMsg *models.Message) {
 	code, err := c.verifyAuth(userMsg.Command)
 	if err != nil {
 		resultStatus = "failed"
-		// c.log.WithError(err).Error("failed to verifyAuth")
+		c.log().Error().Err(err).Msg("failed to verifyAuth")
 	} else {
 		c.bus <- &Event{Kind: EKAuthorize, SessionID: c.info.ID, SessionInfo: &c.info}
 	}
@@ -345,9 +342,7 @@ func (c *Session) writeToClient(message *models.Message) error {
 
 	data, err := json.Marshal(msg)
 	if err != nil {
-		// c.log.WithError(err).
-		// 	WithField("handler", "writeToClient").
-		// 	Error(unableToMarshal, message)
+		c.log().Error().Err(err).Msg(unableToMarshal)
 		return err
 	}
 

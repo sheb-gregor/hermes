@@ -136,6 +136,12 @@ func GetMonitoringMux(cfg MonitoringConf) http.Handler {
 		r.Mount("/debug", middleware.Profiler())
 	}
 
+	// r.Get("/metrics", func(writer http.ResponseWriter, _ *http.Request) {
+	// 	data, _ := socket.MetricsCollector.MarshalJSON()
+	// 	writer.WriteHeader(200)
+	// 	_, _ = writer.Write(data)
+	// })
+
 	return r
 }
 

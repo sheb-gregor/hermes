@@ -1,12 +1,13 @@
 package main
 
 import (
+	"fmt"
 	"os"
 
 	"hermes/app"
 	"hermes/config"
+	"hermes/log"
 
-	"github.com/lancer-kit/armory/log"
 	"github.com/urfave/cli"
 )
 
@@ -40,13 +41,18 @@ func main() {
 	}
 
 	if err := newApp.Run(os.Args); err != nil {
-		log.Get().WithError(err).Errorln("failed run newApp")
+		fmt.Println("failed run newApp:", err.Error())
+		os.Exit(1)
 	}
 }
 
 func serveAction(c *cli.Context) error {
-	cfg := config.ReadConfig(c.GlobalString(flagConfig))
-	logger := log.Get().WithField("app", config.ServiceName)
+	cfg, err := config.ReadConfig(c.GlobalString(flagConfig))
+	if err != nil {
+		return cli.NewExitError(err.Error(), 1)
+	}
+
+	logger := log.New(cfg.Log)
 
 	chief := app.InitChief(logger, cfg)
 	chief.Run()

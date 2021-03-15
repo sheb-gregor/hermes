@@ -8,6 +8,7 @@ import (
 
 	"hermes/app/ws"
 	"hermes/config"
+	"hermes/log"
 	"hermes/metrics"
 	"hermes/models"
 	"hermes/web"
@@ -18,25 +19,24 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/lancer-kit/armory/api/httpx"
 	"github.com/lancer-kit/armory/api/render"
-	"github.com/lancer-kit/armory/log"
 	"github.com/lancer-kit/noble"
 	"github.com/lancer-kit/uwe/v2/presets/api"
 	"github.com/pkg/errors"
-	"github.com/sirupsen/logrus"
+	"github.com/rs/zerolog"
 )
 
-func GetServer(logger *logrus.Entry, cfg config.Cfg, ctx context.Context, hubCom ws.HubCommunicator) *api.Server {
+func GetServer(logger zerolog.Logger, cfg config.Cfg, ctx context.Context, hubCom ws.HubCommunicator) *api.Server {
 	return api.NewServer(cfg.API, getRouter(ctx, logger, cfg, hubCom))
 }
 
-func getRouter(ctx context.Context, logger *logrus.Entry, cfg config.Cfg, hubCom ws.HubCommunicator) http.Handler {
+func getRouter(ctx context.Context, logger zerolog.Logger, cfg config.Cfg, hubCom ws.HubCommunicator) http.Handler {
 	r := chi.NewRouter()
 
 	// A good base middleware stack
 	r.Use(middleware.RequestID)
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
-	r.Use(log.NewRequestLogger(logger.Logger))
+	r.Use(log.LoggerMiddleware(&logger))
 
 	if cfg.API.EnableCORS {
 		corsHandler := cors.New(cors.Options{
@@ -52,8 +52,8 @@ func getRouter(ctx context.Context, logger *logrus.Entry, cfg config.Cfg, hubCom
 	}
 
 	h := handler{
-		ctx: ctx,
-		// log:         logger,
+		ctx:         ctx,
+		log:         logger,
 		hubCom:      hubCom,
 		enableAuth:  cfg.EnableAuth,
 		authCfg:     cfg.AuthProviders,
@@ -71,20 +71,14 @@ func getRouter(ctx context.Context, logger *logrus.Entry, cfg config.Cfg, hubCom
 		r.Get("/sessions/authorized", h.handleActiveSession)
 		r.Get("/subscribe", h.handleNewWS)
 
-		// r.Get("/metrics", func(writer http.ResponseWriter, _ *http.Request) {
-		// 	data, _ := socket.MetricsCollector.MarshalJSON()
-		// 	writer.WriteHeader(200)
-		// 	_, _ = writer.Write(data)
-		// })
-
 	})
 	r.Mount("/", metrics.GetMonitoringMux(cfg.Monitoring))
 	return r
 }
 
 type handler struct {
-	ctx context.Context
-	// log    *logrus.Entry
+	ctx    context.Context
+	log    zerolog.Logger
 	hubCom ws.HubCommunicator
 
 	enableAuth  bool
@@ -95,7 +89,7 @@ type handler struct {
 func (h handler) renderWebPage(w http.ResponseWriter, _ *http.Request) {
 	rawPage, err := web.GetIndexPage()
 	if err != nil {
-		// h.log.WithError(err).Error("unable to read index page")
+		h.log.Error().Err(err).Msg("unable to read index page")
 		render.ServerError(w)
 		return
 	}
@@ -103,7 +97,7 @@ func (h handler) renderWebPage(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	_, err = w.Write(rawPage)
 	if err != nil {
-		// h.log.WithError(err).Error("unable to write index page")
+		h.log.Error().Err(err).Msg("unable to write index page")
 		return
 	}
 }
@@ -141,13 +135,13 @@ func (h handler) handleNewWS(w http.ResponseWriter, r *http.Request) {
 
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		// h.log.WithError(err).Error("unable to upgrade http protocol")
+		h.log.Error().Err(err).Msg("unable to upgrade http protocol")
 		return
 	}
 
-	client := ws.NewSession(h.ctx, nil, h.hubCom.EventBus, conn, authInfo, h.authProvider)
+	client := ws.NewSession(h.ctx, h.hubCom.LogProvider, h.hubCom.EventBus, conn, authInfo, h.authProvider)
 
-	// logger.Debug("Open new client connection")
+	h.log.Debug().Msg("Open new client connection")
 	h.hubCom.EventBus <- &ws.Event{Kind: ws.EKNewSession, Session: client}
 }
 

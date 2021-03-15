@@ -18,6 +18,7 @@ require (
 	github.com/onrik/logrus v0.5.1 // indirect
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.5.1
+	github.com/rs/zerolog v1.20.0
 	github.com/rubenv/sql-migrate v0.0.0-20200212082348-64f95ea68aa3 // indirect
 	github.com/sirupsen/logrus v1.4.2
 	github.com/streadway/amqp v0.0.0-20200108173154-1c71cc93ed71
@@ -26,6 +27,7 @@ require (
 	github.com/xujiajun/nutsdb v0.5.0
 	golang.org/x/crypto v0.0.0-20200320181102-891825fb96df // indirect
 	golang.org/x/sys v0.0.0-20200321134203-328b4cd54aae // indirect
+	gopkg.in/natefinch/lumberjack.v2 v2.0.0
 	gopkg.in/yaml.v2 v2.2.8
 	syreclabs.com/go/faker v1.2.0
 )

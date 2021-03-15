@@ -5,7 +5,7 @@ import (
 	"hermes/config"
 
 	"github.com/lancer-kit/uwe/v2"
-	"github.com/sirupsen/logrus"
+	"github.com/rs/zerolog"
 )
 
 const (
@@ -14,42 +14,41 @@ const (
 	WorkerRabbitConsumer = "rabbit_consumer"
 )
 
-func InitChief(logger *logrus.Entry, cfg config.Cfg) uwe.Chief {
+func InitChief(logger zerolog.Logger, cfg config.Cfg) uwe.Chief {
 	defer func() {
 		rec := recover()
 		if rec != nil {
-			logger.WithField("rec", rec).Fatal("caught panic")
+			logger.Fatal().Interface("recover", rec).Msg("caught panic")
 		}
 	}()
-	logger = logger.WithField("app_layer", "workers")
+	logger = logger.With().Str("app_layer", "workers").Logger()
 
 	chief := uwe.NewChief()
 	chief.UseDefaultRecover()
 	chief.SetEventHandler(func(event uwe.Event) {
-		var level logrus.Level
+		var level zerolog.Level
 		switch event.Level {
 		case uwe.LvlFatal, uwe.LvlError:
-			level = logrus.ErrorLevel
+			level = zerolog.ErrorLevel
 		case uwe.LvlInfo:
-			level = logrus.InfoLevel
+			level = zerolog.InfoLevel
 		default:
-			level = logrus.WarnLevel
+			level = zerolog.WarnLevel
 		}
 
-		logger.WithFields(event.Fields).
-			Log(level, event.Message)
+		logger.WithLevel(level).Fields(event.Fields).Msg(event.Message)
 	})
 
-	hub := ws.NewHub(logger.WithField("worker", WorkerHub), cfg.Cache)
+	hub := ws.NewHub(logger.With().Str("worker", WorkerHub).Logger(), cfg.Cache)
 
 	rabbitConsumer, _ := NewRabbitConsumer(
-		logger.WithField("worker", WorkerRabbitConsumer),
+		logger.With().Str("worker", WorkerRabbitConsumer).Logger(),
 		cfg.RabbitMQ,
 		hub.EventBus(),
 	)
 
 	webServer := GetServer(
-		logger.WithField("worker", WorkerWsAPI),
+		logger.With().Str("worker", WorkerWsAPI).Logger(),
 		cfg,
 		hub.Context(),
 		hub.Communicator(),
@@ -60,7 +59,7 @@ func InitChief(logger *logrus.Entry, cfg config.Cfg) uwe.Chief {
 	chief.AddWorker(WorkerRabbitConsumer, rabbitConsumer)
 
 	// if cfg.Monitoring.Metrics {
-	// 	chief.AddWorker("monitoring", metrics.GetMonitoringServer(cfg.Monitoring, info.App))
+	// 	chief.AddWorker("monitoring", metrics.GetMonitoringServer(cfg.Monitoring, config.App))
 	// }
 
 	return chief

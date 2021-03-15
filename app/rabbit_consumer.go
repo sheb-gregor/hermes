@@ -11,13 +11,13 @@ import (
 
 	"github.com/lancer-kit/uwe/v2"
 	"github.com/pkg/errors"
-	"github.com/sirupsen/logrus"
+	"github.com/rs/zerolog"
 	"github.com/streadway/amqp"
 )
 
 type RabbitConsumer struct {
 	config  config.RabbitMQ
-	logger  *logrus.Entry
+	logger  zerolog.Logger
 	devMode bool
 	wg      *sync.WaitGroup
 
@@ -29,13 +29,13 @@ type RabbitConsumer struct {
 	outBus          chan<- *ws.Event
 }
 
-func NewRabbitConsumer(logger *logrus.Entry, configuration config.RabbitMQ,
+func NewRabbitConsumer(logger zerolog.Logger, configuration config.RabbitMQ,
 	outBus chan<- *ws.Event) (uwe.Worker, chan<- models.ManageQueue) {
 	qm := make(chan models.ManageQueue)
 
 	return &RabbitConsumer{
 		logger:          logger,
-		devMode:         logger.Logger.Level == logrus.TraceLevel,
+		devMode:         logger.GetLevel() == zerolog.TraceLevel,
 		config:          configuration,
 		outBus:          outBus,
 		queueManagement: qm,
@@ -108,15 +108,14 @@ func (worker *RabbitConsumer) runQueueSub(ctx context.Context, sub config.Exchan
 	worker.queueCancelers[sub.Queue] = cancel
 
 	worker.wg.Add(1)
-	logger := worker.logger.
-		WithField("queue", sub.Queue).
-		WithField("exchange", sub.Exchange)
 
 	go func(subscription config.Exchange) {
 		defer worker.wg.Done()
 
 		if err := worker.startConsumingRoutine(subCtx, subscription, out); err != nil {
-			logger.WithError(err).Error("failed to subscribe")
+			worker.logger.Error().Str("queue", subscription.Queue).
+				Str("exchange", subscription.Exchange).
+				Err(err).Msg("failed to subscribe")
 			return
 		}
 	}(sub)
@@ -148,27 +147,27 @@ func (worker *RabbitConsumer) Run(wCtx uwe.Context) error {
 			if message.Body == nil {
 				continue
 			}
-			logger := worker.logger.WithFields(logrus.Fields{
+			logger := worker.logger.With().Fields(map[string]interface{}{
 				"routing_key":  message.RoutingKey,
 				"consumer_tag": message.ConsumerTag,
-				"exchange":     message.Exchange})
+				"exchange":     message.Exchange,
+			}).Logger()
 
 			if worker.devMode {
 				logger.
-					WithFields(logrus.Fields{
-						"delivery_tag": message.DeliveryTag,
-						"message_id":   message.MessageId,
-						"content_type": message.ContentType,
-						"event_kind":   message.Headers[models.RHeaderEvent],
-						"visibility":   message.Headers[models.RHeaderVisibility],
-						"body":         string(message.Body),
-					}).
-					Trace("received a deliveries from consumer")
+					Trace().Fields(map[string]interface{}{
+					"delivery_tag": message.DeliveryTag,
+					"message_id":   message.MessageId,
+					"content_type": message.ContentType,
+					"event_kind":   message.Headers[models.RHeaderEvent],
+					"visibility":   message.Headers[models.RHeaderVisibility],
+					"body":         string(message.Body),
+				}).Msg("received a deliveries from consumer")
 			}
 
 			params, err := models.ParseRabbitHeader(message)
 			if err != nil {
-				logger.WithError(err).Warn("invalid header")
+				logger.Warn().Err(err).Msg("invalid header")
 			}
 
 			if params.Visibility == models.VisibilityInternal {
@@ -197,12 +196,12 @@ func (worker *RabbitConsumer) Run(wCtx uwe.Context) error {
 			cancel()
 			worker.wg.Wait()
 
-			worker.logger.Info("Receive exit code, stop all consumers")
+			worker.logger.Info().Msg("Receive exit code, stop all consumers")
 			if err := worker.channel.Close(); err != nil {
-				worker.logger.WithError(err).Warn("fail when try to close channel")
+				worker.logger.Warn().Err(err).Msg("fail when try to close channel")
 			}
 			if err := worker.conn.Close(); err != nil {
-				worker.logger.WithError(err).Warn("fail when try to close connection")
+				worker.logger.Warn().Err(err).Msg("fail when try to close connection")
 			}
 
 			return nil
@@ -212,12 +211,11 @@ func (worker *RabbitConsumer) Run(wCtx uwe.Context) error {
 
 func (worker *RabbitConsumer) startConsumingRoutine(ctx context.Context,
 	sub config.Exchange, out chan amqp.Delivery) error {
-	logger := worker.logger.
-		WithField("queue", sub.Queue).
-		WithField("exchange", sub.Exchange)
+	logger := worker.logger.With().
+		Str("queue", sub.Queue).
+		Str("exchange", sub.Exchange).Logger()
 
 	if err := worker.ensureQueue(sub); err != nil {
-		logger.WithError(err).Error("failed to ensure queue")
 		return errors.Wrap(err, "failed to ensure queue")
 	}
 
@@ -225,11 +223,10 @@ func (worker *RabbitConsumer) startConsumingRoutine(ctx context.Context,
 		sub.Queue, worker.config.Auth.GetConsumerTag(sub.Queue),
 		true, false, false, false, nil)
 	if err != nil {
-		logger.WithError(err).Error("failed to register a consumer")
 		return errors.Wrap(err, "failed to register a consumer")
 	}
 
-	logger.Info("Run consumer loop")
+	logger.Info().Msg("Run consumer loop")
 	for {
 		select {
 		case message := <-consume:
@@ -238,7 +235,7 @@ func (worker *RabbitConsumer) startConsumingRoutine(ctx context.Context,
 			}
 
 			if worker.devMode {
-				logger.WithFields(logrus.Fields{
+				logger.Trace().Fields(map[string]interface{}{
 					"delivery_tag": message.DeliveryTag,
 					"exchange":     message.Exchange,
 					"routing_key":  message.RoutingKey,
@@ -248,13 +245,13 @@ func (worker *RabbitConsumer) startConsumingRoutine(ctx context.Context,
 					"visibility":   message.Headers["visibility"],
 					"uuid":         message.Headers["uuid"],
 					"body":         string(message.Body),
-				}).Trace("received a new message from queue")
+				}).Msg("received a new message from queue")
 			}
 
 			out <- message
 
 		case <-ctx.Done():
-			logger.Info("Receive exit code, stop working")
+			logger.Info().Msg("Receive exit code, stop working")
 			return nil
 		}
 	}
