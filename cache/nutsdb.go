@@ -3,10 +3,11 @@ package cache
 import (
 	"encoding/json"
 
+	"hermes/config"
+	"hermes/models"
+
 	"github.com/pkg/errors"
 	"github.com/xujiajun/nutsdb"
-	"gitlab.inn4science.com/ctp/hermes/config"
-	"gitlab.inn4science.com/ctp/hermes/models"
 )
 
 type NutsDBStorage struct {

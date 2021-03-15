@@ -26,3 +26,9 @@ vendor
 config.yaml
 cover.*
 /env/local.*
+
+hermes
+tmp/client
+tmp/auth_provider
+tmp/rabbit_emitter
+tmp/*.json

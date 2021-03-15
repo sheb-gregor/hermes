@@ -26,10 +26,18 @@ linters:
     - misspell
     - nakedret
     - prealloc
-    - interfacer
     - scopelint
     - stylecheck
     - unconvert
+    - asciicheck
+    - bodyclose
+#    - cyclop
+    - depguard
+    - durationcheck
+    - exportloopref
+    - forcetypeassert
+    - godox
+#    - errorlint
 
 issues:
   exclude-rules:
@@ -41,17 +49,13 @@ issues:
     - path: btc\.go
       linters:
         - dupl
-    - path: ltc\.go
-      linters:
-        - dupl
-    - path: scripts/
+    - path: tools/
       linters:
         - funlen
         - ineffassign
         - gochecknoglobals
         - staticcheck
-    - path: _params\.go
-      linters:
+        - structcheck
+        - gosec
+        - unused
         - govet
-        - gochecknoglobals
-        - lll

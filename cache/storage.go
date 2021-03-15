@@ -4,9 +4,10 @@ import (
 	"fmt"
 	"time"
 
+	"hermes/config"
+	"hermes/models"
+
 	"github.com/pkg/errors"
-	"gitlab.inn4science.com/ctp/hermes/config"
-	"gitlab.inn4science.com/ctp/hermes/models"
 )
 
 const (

@@ -8,10 +8,13 @@ import (
 	"sync"
 	"time"
 
+	"hermes/config"
+	"hermes/metrics"
+	"hermes/models"
+
 	"github.com/gorilla/websocket"
 	"github.com/pkg/errors"
-	"github.com/sirupsen/logrus"
-	"gitlab.inn4science.com/ctp/hermes/models"
+	"github.com/rs/zerolog"
 )
 
 const (
@@ -43,110 +46,61 @@ const (
 )
 
 const (
-	unableToUnmarshal = "unable to unmarshal json:"
+	unableToUnmarshal = "unable to unmarshal json"
 	unableToMarshal   = "unable to marshal data:"
 )
 
-type AuthProviderF func(models.AuthRequest) (*models.AuthResponse, int, error)
+type AuthProviderFunc func(models.AuthRequest) (*models.AuthResponse, int, error)
 
 // Session is a middleman between the websocket connection and the hub.
 type Session struct {
 	conn *websocket.Conn
 
-	bus    EventStream
 	ctx    context.Context
 	cancel context.CancelFunc
-
-	info models.SessionInfo
+	wg     sync.WaitGroup
+	log    func() *zerolog.Logger
 
 	// Buffered channel of outbound MessagesChan.
-	send                 chan *models.Message
-	log                  *logrus.Entry
-	subscriptionsChannel activeChannel
-	subscriptionsEvent   activeEvent
-	mutedEvents          activeEvent
+	bus  EventStream
+	send chan *models.Message
 
-	authProvider AuthProviderF
+	info         models.SessionInfo
+	subInfo      SubscriptionsStore
+	authProvider AuthProviderFunc
 }
 
-func NewSession(ctx context.Context, log *logrus.Entry, bus EventStream,
-	conn *websocket.Conn, info models.SessionInfo, authProvider AuthProviderF) *Session {
+func NewSession(pCtx context.Context, logProvider func() zerolog.Logger,
+	bus EventStream, conn *websocket.Conn, info models.SessionInfo, authProvider AuthProviderFunc) *Session {
 
-	ctx, cancel := context.WithCancel(ctx)
-
+	ctx, cancel := context.WithCancel(pCtx)
 	return &Session{
-		ctx:                  ctx,
-		cancel:               cancel,
-		conn:                 conn,
-		bus:                  bus,
-		info:                 info,
-		authProvider:         authProvider,
-		log:                  log.WithField("session_id", info.ID),
-		send:                 make(chan *models.Message, maxChanLen/2),
-		subscriptionsChannel: activeChannel{new(sync.Map)},
-		subscriptionsEvent:   activeEvent{new(sync.Map)},
-		mutedEvents:          activeEvent{new(sync.Map)},
+		ctx:          ctx,
+		cancel:       cancel,
+		conn:         conn,
+		bus:          bus,
+		info:         info,
+		authProvider: authProvider,
+		log: func() *zerolog.Logger {
+			l := logProvider().With().Int64("session_id", info.ID).Logger()
+			return &l
+		},
+		send:    make(chan *models.Message, maxChanLen/2),
+		subInfo: NewSubscriptions(),
 	}
 }
 
-func (c *Session) isSubscribed(channel, event string) bool {
-	if channel == EvCache || channel == EvStatusChannel {
-		return true
+func (c *Session) Close() error {
+	c.cancel()
+	c.wg.Wait()
+
+	err := c.conn.Close()
+	if err != nil {
+		return err
 	}
 
-	if _, ok := c.mutedEvents.Load(event); ok {
-		return false
-	}
-
-	if c.subscriptionsChannel.getChannel(WildcardSubscription) {
-		eventSubs := c.subscriptionsEvent.getSubscribeMap(WildcardSubscription)
-		if eventSubs == nil {
-			return true
-		}
-
-		return eventSubs[event] || eventSubs[WildcardSubscription]
-	}
-
-	chanSub := c.subscriptionsChannel.getChannel(channel)
-	eventSubs := c.subscriptionsEvent.getSubscribeMap(channel)
-	if eventSubs == nil {
-		return false
-	}
-
-	eventSub := eventSubs[event] || eventSubs[WildcardSubscription]
-	return chanSub && eventSub
-}
-
-func (c *Session) addSubscription(channel, event string) {
-	// MetricsCollector.Add(metrics.MKey("sessionStorage." + c.userUID + ".addSubscription"))
-	if channel == "" {
-		return
-	}
-
-	if event == "" {
-		event = WildcardSubscription
-	}
-
-	c.subscriptionsChannel.Store(channel, true)
-
-	eventSubs := c.subscriptionsEvent.getSubscribeMap(channel)
-	if eventSubs == nil {
-		eventSubs = make(map[string]bool)
-	}
-
-	eventSubs[event] = true
-	c.subscriptionsEvent.Store(channel, eventSubs)
-
-	c.mutedEvents.Delete(event)
-}
-
-func (c *Session) rmSubscription(channel string) {
-	c.subscriptionsChannel.Store(channel, false)
-	c.subscriptionsEvent.Store(channel, map[string]bool{})
-}
-
-func (c *Session) muteEvent(event string) {
-	c.mutedEvents.Store(event, struct{}{})
+	close(c.send)
+	return nil
 }
 
 type wsMessage struct {
@@ -162,10 +116,12 @@ type wsMessage struct {
 // nolint:funlen
 func (c *Session) readStream() {
 	defer func() {
-		c.log.Info("connection closed")
+		c.log().Info().Msg("connection closed")
 		c.bus <- &Event{Kind: EKUnregister, SessionID: c.info.ID}
+		c.wg.Done()
 	}()
 
+	c.wg.Add(1)
 	c.conn.SetReadLimit(maxMessageSize)
 	c.conn.SetPongHandler(func(string) error { return c.conn.SetReadDeadline(time.Now().Add(pongWait)) })
 
@@ -184,14 +140,14 @@ func (c *Session) readStream() {
 		case m := <-incomingMessages:
 			switch m.mType {
 			case websocket.PingMessage, websocket.PongMessage:
-				c.log.Trace("ws proto synchronization")
+				c.log().Trace().Msg("ws proto synchronization")
 				continue
 			case websocket.CloseMessage:
 				cancelReader()
 				return
 			}
 			if err := c.processIncomingMessage(m.data); err != nil {
-				c.log.WithError(err).Info("failed to check message event")
+				c.log().Warn().Err(err).Msg("failed to check message event")
 				continue
 			}
 		}
@@ -200,25 +156,26 @@ func (c *Session) readStream() {
 }
 
 func (c *Session) readMessages(ctx context.Context, im chan wsMessage) {
+	c.wg.Add(1)
 	for {
 		select {
 		case <-ctx.Done():
 			close(im)
+			c.wg.Done()
 			return
 		default:
 			msgCode, message, err := c.conn.ReadMessage()
 			if err != nil {
 				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-					c.log.WithError(err).Debug("socket closed")
+					c.log().Warn().Err(err).Msg("socket closed")
 				} else if err != io.EOF {
-					c.log.Debug("error while reading from client:", err)
+					c.log().Warn().Err(err).Msg("error while reading from client")
 				}
 				return
 			}
 
-			// MetricsCollector.Add(metrics.MKey("sessionStorage." + c.userUID + ".readMessage"))
 			if message == nil {
-				c.log.Debug("nil message from read channel")
+				c.log().Warn().Msg("nil message from read channel")
 				continue
 			}
 
@@ -236,10 +193,12 @@ func (c *Session) writeToStream() {
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
 		ticker.Stop()
-		c.log.Debug("close connection")
+		c.log().Debug().Msg("close connection")
 
 		c.bus <- &Event{Kind: EKUnregister, SessionID: c.info.ID}
+		c.wg.Done()
 	}()
+	c.wg.Add(1)
 
 	for {
 		select {
@@ -248,28 +207,29 @@ func (c *Session) writeToStream() {
 			return
 		case message, ok := <-c.send:
 			if !ok {
-				c.log.Debug("ending client write handler")
+				c.log().Debug().Msg("ending client write handler")
 				return
 			}
 
 			if message == nil {
-				c.log.Debug("nil message from read channel")
+				c.log().Debug().Msg("nil message from read channel")
 				continue
 			}
 
-			if !c.isSubscribed(message.Channel, message.Event) {
+			if !c.subInfo.IsSubscribed(message.Channel, message.Event) {
+				metrics.Inc(config.DroppedMessages)
 				continue
 			}
 			if err := c.writeToClient(message); err != nil {
-				c.log.WithError(err).Debug("error when writing to client")
+				c.log().Warn().Err(err).Msg("error when writing to client")
 				return
 			}
 
-			c.log.WithField("event", message.Event).Trace("write message to connection")
+			metrics.Inc(config.DeliveredMessages)
 
 		case <-ticker.C:
 			if err := c.pingWs(); err != nil {
-				c.log.WithError(err).Debug("failed to ping socket")
+				c.log().Warn().Err(err).Msg("failed to ping socket")
 				return
 			}
 		}
@@ -279,11 +239,10 @@ func (c *Session) writeToStream() {
 func (c *Session) pingWs() error {
 	rawData := []byte(`{"channel":"ws_status","event":"ping"}`)
 	if err := c.conn.WriteMessage(websocket.TextMessage, rawData); err != nil {
-		c.log.WithError(err).Debug("failed to send ping message")
 		return err
 	}
 
-	c.log.Debug("client synchronization - ping sent")
+	c.log().Debug().Msg("client synchronization - ping sent")
 	return nil
 }
 
@@ -291,9 +250,9 @@ func (c *Session) processIncomingMessage(raw []byte) error {
 	userMsg := new(models.Message)
 	err := json.Unmarshal(raw, userMsg)
 	if err != nil {
-		c.log.WithError(err).
-			WithField("handler", "processIncomingMessage").
-			Error(unableToUnmarshal, string(raw))
+		c.log().Error().Err(err).
+			Str("handler", "processIncomingMessage").
+			Msg(unableToUnmarshal)
 		return err
 	}
 
@@ -303,8 +262,6 @@ func (c *Session) processIncomingMessage(raw []byte) error {
 
 	switch userMsg.Event {
 	case EvHandshake:
-		// MetricsCollector.Add(metrics.MKey("sessionStorage." + c.userUID + ".EvHandshake"))
-
 		c.bus <- &Event{Kind: EKHandshake, SessionID: c.info.ID}
 
 	case EvAuthorize:
@@ -314,24 +271,20 @@ func (c *Session) processIncomingMessage(raw []byte) error {
 		c.bus <- &Event{Kind: EKCache, SessionID: c.info.ID, Message: userMsg}
 
 	case EvSubscribe:
-		// MetricsCollector.Add(metrics.MKey("sessionStorage." + c.userUID + ".EvSubscribe"))
-
 		channel := userMsg.Command["channel"]
 		event := userMsg.Command["event"]
-		c.addSubscription(channel, event)
+		c.subInfo.AddSubscription(channel, event)
 
 	case EvUnsubscribe:
-		// MetricsCollector.Add(metrics.MKey("sessionStorage." + c.userUID + ".EvUnsubscribe"))
 		channel := userMsg.Command["channel"]
-		c.rmSubscription(channel)
+		c.subInfo.RmSubscription(channel)
 
 	case EvMute:
-		// MetricsCollector.Add(metrics.MKey("sessionStorage." + c.userUID + ".EvMute"))
 		event := userMsg.Command["event"]
-		c.muteEvent(event)
+		c.subInfo.MuteEvent(event)
 
 	case EvPong:
-		c.log.Debug("client synchronization - pong received")
+		c.log().Debug().Msg("client synchronization - pong received")
 	}
 
 	return nil
@@ -350,7 +303,7 @@ func (c *Session) processAuthEvent(userMsg *models.Message) {
 	code, err := c.verifyAuth(userMsg.Command)
 	if err != nil {
 		resultStatus = "failed"
-		c.log.WithError(err).Error("failed to verifyAuth")
+		c.log().Error().Err(err).Msg("failed to verifyAuth")
 	} else {
 		c.bus <- &Event{Kind: EKAuthorize, SessionID: c.info.ID, SessionInfo: &c.info}
 	}
@@ -378,13 +331,10 @@ func (c *Session) verifyAuth(command map[string]string) (int, error) {
 	}
 
 	c.info.UserID = authData.UserID
-	// c.log = c.log.WithField("user_id", authData.UserID)
 	return code, nil
 }
 
 func (c *Session) writeToClient(message *models.Message) error {
-	// MetricsCollector.Add(metrics.MKey("sessionStorage." + c.userUID + ".writeToClient"))
-
 	var msg interface{} = message
 	if message.Channel != EvStatusChannel {
 		msg = message.ToShort()
@@ -392,9 +342,7 @@ func (c *Session) writeToClient(message *models.Message) error {
 
 	data, err := json.Marshal(msg)
 	if err != nil {
-		c.log.WithError(err).
-			WithField("handler", "writeToClient").
-			Error(unableToMarshal, message)
+		c.log().Error().Err(err).Msg(unableToMarshal)
 		return err
 	}
 
