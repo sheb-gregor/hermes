@@ -1,23 +1,60 @@
 package main
 
 import (
+	"fmt"
 	"os"
 
-	"github.com/lancer-kit/armory/log"
+	"hermes/app"
+	"hermes/config"
+	"hermes/log"
+
 	"github.com/urfave/cli"
-	"gitlab.inn4science.com/ctp/hermes/actions"
-	"gitlab.inn4science.com/ctp/hermes/config"
-	"gitlab.inn4science.com/ctp/hermes/info"
+)
+
+const flagConfig = "config"
+
+//nolint:gochecknoglobals
+var (
+	build   = "n/a"
+	version = "n/a"
 )
 
 func main() {
-	app := cli.NewApp()
-	app.Usage = "A " + config.ServiceName + " service"
-	app.Version = info.App.Version + ":" + info.App.Build
-	app.Flags = actions.GetFlags()
-	app.Commands = actions.GetCommands()
+	config.App.Build = build
+	config.App.Version = version
 
-	if err := app.Run(os.Args); err != nil {
-		log.Get().WithError(err).Errorln("failed run app")
+	newApp := cli.NewApp()
+	newApp.Usage = "A " + config.ServiceName + " service"
+	newApp.Version = config.App.Version + ":" + config.App.Build
+	newApp.Flags = []cli.Flag{
+		cli.StringFlag{
+			Name:  flagConfig + ", c",
+			Value: "./config.yaml",
+		},
 	}
+	newApp.Commands = []cli.Command{
+		{
+			Name:   "serve",
+			Usage:  "starts " + config.ServiceName + " workers",
+			Action: serveAction,
+		},
+	}
+
+	if err := newApp.Run(os.Args); err != nil {
+		fmt.Println("failed run newApp:", err.Error())
+		os.Exit(1)
+	}
+}
+
+func serveAction(c *cli.Context) error {
+	cfg, err := config.ReadConfig(c.GlobalString(flagConfig))
+	if err != nil {
+		return cli.NewExitError(err.Error(), 1)
+	}
+
+	logger := log.New(cfg.Log)
+
+	chief := app.InitChief(logger, cfg)
+	chief.Run()
+	return nil
 }

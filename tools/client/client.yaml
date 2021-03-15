@@ -1,0 +1,16 @@
+hermes_url: ws://127.0.0.1:8090/_ws/subscribe
+
+connections: 1
+
+behaviors:
+  normal_anon: 0
+  normal_user: 100
+  reconnect_anon: 0
+  reconnect_user: 0
+  drop: 0
+
+actors_params:
+  origin: "user"
+  role: "user"
+  reconnect_delay: 1500
+  drop_delay: 500

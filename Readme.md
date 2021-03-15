@@ -1,6 +1,17 @@
+<div align="center">
+	<h1><img alt="Hermes logo" src="logo.png" height="300" /><br />
+	</h1>
+</div>
+
+
+
+[comment]: <> (![Hermes logo]&#40;logo.png "Hermes"&#41;)
+
+
 # Hermes
 
-Event delivery service
+
+The multifuntional event delivery service
 
 ## Glossary
 
@@ -190,3 +201,8 @@ Accepted Status Codes from auth provider:
 - 403 — Client token invalid, Client can't be authorized
 
 - Other codes will be interpreted as Error code and Client will be not authorized
+
+
+## Credits
+
+Logo: https://openclipart.org/detail/171035/winged-foot

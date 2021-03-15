@@ -3,12 +3,13 @@ package config
 import (
 	"io/ioutil"
 
+	"hermes/log"
+	"hermes/metrics"
+
 	validation "github.com/go-ozzo/ozzo-validation"
-	"github.com/lancer-kit/armory/log"
 	"github.com/lancer-kit/noble"
 	"github.com/lancer-kit/uwe/v2/presets/api"
 	"github.com/pkg/errors"
-	"github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v2"
 )
 
@@ -18,7 +19,7 @@ const (
 
 // Cfg main structure of the app configuration.
 type Cfg struct {
-	Log      LogConfig  `json:"log" yaml:"log"`
+	Log      log.Config `json:"log" yaml:"log"`
 	API      api.Config `json:"api" yaml:"api"`
 	RabbitMQ RabbitMQ   `json:"rabbit_mq" yaml:"rabbit_mq"`
 
@@ -28,6 +29,8 @@ type Cfg struct {
 	AuthorizedServices map[string]noble.Secret `json:"authorized_services" yaml:"authorized_services"`
 	AuthProviders      map[string]AuthProvider `json:"auth_providers" yaml:"auth_providers"`
 	Cache              CacheCfg                `json:"cache" yaml:"cache"`
+
+	Monitoring metrics.MonitoringConf `json:"monitoring" yaml:"monitoring"`
 }
 
 func (cfg Cfg) Validate() error {
@@ -61,42 +64,25 @@ func (cfg Cfg) Validate() error {
 		validation.Field(&cfg.Log, validation.Required),
 		validation.Field(&cfg.RabbitMQ, validation.Required),
 		validation.Field(&cfg.Cache, validation.Required),
+		validation.Field(&cfg.Monitoring, validation.Required),
 	)
 }
 
-func ReadConfig(path string) Cfg {
+func ReadConfig(path string) (Cfg, error) {
 	rawConfig, err := ioutil.ReadFile(path)
 	if err != nil {
-		logrus.New().WithError(err).
-			WithField("path", path).
-			Fatal("unable to read config file")
+		return Cfg{}, errors.Wrap(err, "unable to read config file")
 	}
 
 	config := new(Cfg)
 	err = yaml.Unmarshal(rawConfig, config)
 	if err != nil {
-		logrus.New().WithError(err).
-			WithField("raw_config", rawConfig).
-			Fatal("unable to unmarshal config file")
+		return Cfg{}, errors.Wrap(err, "unable to unmarshal config file")
 	}
 
 	err = config.Validate()
 	if err != nil {
-		logrus.New().WithError(err).
-			Fatal("Invalid configuration")
-	}
-
-	_, err = log.Init(log.Config{
-		AppName:  config.Log.AppName,
-		Level:    config.Log.Level.Get(),
-		Sentry:   config.Log.Sentry,
-		AddTrace: config.Log.AddTrace,
-		JSON:     config.Log.JSON,
-	})
-	if err != nil {
-		logrus.New().
-			WithError(err).
-			Fatal("Unable to init log")
+		return Cfg{}, errors.Wrap(err, "invalid configuration")
 	}
 
 	// need to sanitize allowed roles
@@ -105,7 +91,12 @@ func ReadConfig(path string) Cfg {
 		config.AuthProviders[origin] = provider
 	}
 
-	return *config
+	if config.Monitoring.Metrics {
+		metrics.Init(metrics.CollectorOpts{})
+		registerAllKeys()
+	}
+
+	return *config, nil
 }
 
 // Config is a options for the initialization

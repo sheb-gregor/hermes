@@ -14,7 +14,7 @@ services:
     depends_on:
       - rabbitmq
     networks:
-      luxtrade:
+      hermes:
 
   rabbitmq:
     image: 'bitnami/rabbitmq:3.8'
@@ -28,7 +28,7 @@ services:
     volumes:
       - ./env/data/rabbitmq_data:/bitnami
     networks:
-      luxtrade:
+      hermes:
 
 networks:
-  luxtrade: {}
+  hermes: {}

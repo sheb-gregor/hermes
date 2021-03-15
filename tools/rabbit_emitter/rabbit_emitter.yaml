@@ -1,0 +1,31 @@
+rabbit_mq:
+  host: 0.0.0.0:5672
+  user: "env:RABBITMQ_DEFAULT_USER"
+  password: "env:RABBITMQ_DEFAULT_PASS"
+  consumer_tag: emitter_for_hermes
+
+auth_format:
+  format: "user_%d"
+  from: 0
+  to: 10
+
+
+exchanges:
+  - exchange: test.alpha
+    queue: test.alpha
+    broadcast: true
+    direct_random: false
+  - exchange: test.beta
+    queue: test.beta
+    broadcast: true
+    direct_random: true
+  - exchange: test.delta
+    queue: test.delta
+    broadcast: true
+    direct_random: false
+  - exchange: test.gamma
+    queue: test.gamma
+    broadcast: true
+    direct_random: true
+
+tick_period: 1
