@@ -8,7 +8,6 @@ ARG CONFIG="master"
 
 #ENV GOPROXY=direct
 ENV GO111MODULE=on
-ENV GOPRIVATE=*.inn4science.com,gitlab.com
 
 WORKDIR /service
 ADD . .

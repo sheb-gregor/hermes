@@ -72,7 +72,7 @@ ws://<server_address>/_ws/subscribe
   "channel":"ws_status",
   "event": "subscribe",
   "command": {
-    "channel":"ctp.notifications.prices",
+    "channel":"notifications.prices",
     "event": "market_data"
   }
 }
@@ -175,7 +175,7 @@ Example:
 ```json
 {
   "broadcast": true,
-  "channel": "ctp.notifications.prices",
+  "channel": "notifications.prices",
   "event": "market_data",
   "data": {
     "market_data": {
